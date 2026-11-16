@@ -41,12 +41,54 @@ struct GlowConfig {
     int opacity = 16;
 };
 
+struct DynamicColorSettings {
+    bool enabled = false;
+    int preset = 1;  // -1 = custom, 0..4 = built-in palette
+    int primaryR = 157;
+    int primaryG = 0;
+    int primaryB = 255;
+    int secondaryR = 255;
+    int secondaryG = 102;
+    int secondaryB = 204;
+    int accentR = 255;
+    int accentG = 179;
+    int accentB = 0;
+    int glowR = 70;
+    int glowG = 20;
+    int glowB = 100;
+
+    bool spectrumGradient = true;
+    bool bassFlash = true;
+    bool timeFlow = true;
+
+    int intensity = 100;      // 0..200 %
+    int flowSpeed = 100;      // 0..200 %
+    int transitionMs = 500;   // 0..2000 ms
+};
+
+struct ColorPreset {
+    const wchar_t* name;
+    int primaryR, primaryG, primaryB;
+    int secondaryR, secondaryG, secondaryB;
+    int accentR, accentG, accentB;
+    int glowR, glowG, glowB;
+};
+
+inline constexpr ColorPreset kColorPresets[5] = {
+    {L"赛博", 0, 255, 255, 255, 0, 255, 255, 255, 0, 0, 70, 100},
+    {L"幽紫", 157, 0, 255, 255, 102, 204, 255, 179, 0, 70, 20, 100},
+    {L"极光", 0, 255, 136, 0, 191, 255, 255, 255, 255, 0, 80, 90},
+    {L"落日", 255, 69, 0, 255, 20, 147, 255, 215, 0, 110, 30, 20},
+    {L"黑白", 230, 230, 230, 170, 170, 170, 255, 255, 255, 70, 70, 70},
+};
+
 struct VisualSettings {
     EffectConfig outer;
     EffectConfig dots;
     EffectConfig wave;
     ShardConfig shards;
     GlowConfig glow;
+    DynamicColorSettings colors;
 
     int panelR = 12;
     int panelG = 20;

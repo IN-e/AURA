@@ -48,8 +48,9 @@ private:
         Wave = 2,
         Shards = 3,
         Glow = 4,
-        Appearance = 5,
-        Source = 6,
+        Color = 5,
+        Appearance = 6,
+        Source = 7,
     };
 
     enum class HitKind {
@@ -73,10 +74,13 @@ private:
         ShardTemplate,
         Recenter,
         Reset,
+        ColorEnable,
+        ColorPreset,
+        ColorBehavior,
     };
 
     struct FieldRef {
-        int group = 0;  // 0..2 effect, 3 panel, 4 shards, 5 center glow
+        int group = 0;  // 0..2 effect, 3 panel, 4 shards, 5 center glow, 6 color roles, 7 color dynamics
         int field = 0;  // 0..2 color; 3..7 effect/global values
         bool operator==(const FieldRef& other) const {
             return group == other.group && field == other.field;
@@ -127,11 +131,13 @@ private:
     void RenderEffectPage(const Theme& theme, int effectIndex);
     void RenderShardsPage(const Theme& theme);
     void RenderGlowPage(const Theme& theme);
+    void RenderColorPage(const Theme& theme);
     void RenderAppearancePage(const Theme& theme);
     void RenderFooter(const Theme& theme, int effectIndex);
     void DrawToggle(const Theme& theme, D2D1_RECT_F rect, bool on, bool hovered);
     void DrawColorSection(const Theme& theme, int group, const wchar_t* label, float y);
     void DrawColorField(const Theme& theme, int group, int channel, D2D1_RECT_F rect);
+    void DrawColorRoleRow(const Theme& theme, int baseField, const wchar_t* label, float y);
     void DrawSliderRow(const Theme& theme, int group, int field, const wchar_t* label, float y);
     void DrawValuePill(const Theme& theme, int group, int field, D2D1_RECT_F rect);
     void DrawWindowButtons(const Theme& theme);
@@ -166,6 +172,8 @@ private:
     void SelectTab(int index);
     void ToggleEffect(int index);
     void TogglePin();
+    void ToggleDynamicColors();
+    void ApplyColorPreset(int index);
     void ApplyPreset(int index);
     void ResetVisuals();
     void RefreshStatus();

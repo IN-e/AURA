@@ -21,6 +21,7 @@ public:
     float TimeDomainAt(float position) const;
     float Level() const { return level_; }
     float RawPeak() const { return rawPeak_; }
+    float BassLevel() const { return bass_; }
     float Flux() const { return flux_; }
     float Beat() const { return beat_; }
     float Gate() const { return gate_; }
@@ -51,6 +52,7 @@ private:
 
     float level_ = 0.0f;
     float rawPeak_ = 0.0f;
+    float bass_ = 0.0f;
     float flux_ = 0.0f;
     float gate_ = 0.0f;
     float peakEnvelope_ = 0.0f;

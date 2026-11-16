@@ -10,7 +10,7 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 constexpr float kWidth = 560.0f;
-constexpr float kHeight = 820.0f;
+constexpr float kHeight = 850.0f;
 constexpr float kMargin = 28.0f;
 constexpr float kContentWidth = 504.0f;
 constexpr int kListTop = 212;
@@ -225,13 +225,15 @@ void ControlPanel::RenderTabs(const Theme& theme) {
     D2D1_RECT_F tray = R(kMargin, 266, kContentWidth, 42);
     FillRound(renderTarget_.Get(), brush_.Get(), theme.surface, tray, 13);
     StrokeRound(renderTarget_.Get(), brush_.Get(), theme.border, tray, 13, 1.0f);
-    const wchar_t* labels[] = {L"声环", L"点阵", L"横波", L"碎片", L"底光", L"外观"};
+    const wchar_t* labels[] = {L"声环", L"点阵", L"横波", L"碎片",
+                               L"底光", L"色彩", L"外观"};
     int active = CurrentEffect();
     if (page_ == Page::Shards) active = 3;
     else if (page_ == Page::Glow) active = 4;
-    else if (page_ == Page::Appearance) active = 5;
-    const float tabWidth = (kContentWidth - 6.0f) / 6.0f;
-    for (int i = 0; i < 6; ++i) {
+    else if (page_ == Page::Color) active = 5;
+    else if (page_ == Page::Appearance) active = 6;
+    const float tabWidth = (kContentWidth - 6.0f) / 7.0f;
+    for (int i = 0; i < 7; ++i) {
         D2D1_RECT_F tab = R(kMargin + 3.0f + i * tabWidth, 269, tabWidth, 36);
         bool hovered = IsHovered(HitKind::Tab, i, -1);
         if (i == active) {
@@ -239,7 +241,7 @@ void ControlPanel::RenderTabs(const Theme& theme) {
         } else if (hovered) {
             FillRound(renderTarget_.Get(), brush_.Get(), theme.surfaceHover, tab, 10);
         }
-        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), labels[i], 10.7f,
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), labels[i], 9.8f,
              i == active ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
              i == active ? theme.accentText : theme.muted, tab,
              DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -275,10 +277,11 @@ void ControlPanel::DrawColorSection(const Theme& theme, int group, const wchar_t
     DrawColorField(theme, group, 2, R(474, y, 58, 36));
 }
 
-void ControlPanel::DrawColorField(const Theme& theme, int group, int channel,
+void ControlPanel::DrawColorField(const Theme& theme, int group, int fieldIndex,
                                   D2D1_RECT_F rect) {
-    FieldRef ref{group, channel};
-    bool hovered = IsHovered(HitKind::ColorField, group, channel);
+    FieldRef ref{group, fieldIndex};
+    int channel = fieldIndex % 3;
+    bool hovered = IsHovered(HitKind::ColorField, group, fieldIndex);
     bool editing = IsEditing(ref);
     FillRound(renderTarget_.Get(), brush_.Get(),
               editing ? theme.accentSoft : hovered ? theme.surfaceHover : theme.surface, rect,
@@ -302,7 +305,7 @@ void ControlPanel::DrawColorField(const Theme& theme, int group, int channel,
         Line(renderTarget_.Get(), brush_.Get(), theme.accent, caretX, rect.top + 15, caretX,
              rect.top + 30, 1.0f);
     }
-    AddHit(HitKind::ColorField, group, channel, rect);
+    AddHit(HitKind::ColorField, group, fieldIndex, rect);
 }
 
 void ControlPanel::DrawValuePill(const Theme& theme, int group, int field,
@@ -482,8 +485,111 @@ void ControlPanel::RenderGlowPage(const Theme& theme) {
          DWRITE_FONT_WEIGHT_NORMAL, theme.faint, R(44, 634, 460, 16));
 }
 
+void ControlPanel::DrawColorRoleRow(const Theme& theme, int baseField, const wchar_t* label,
+                                    float y) {
+    D2D1_SIZE_F labelSize =
+        gfx::MeasureText(writeFactory_.Get(), label, 11.2f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), label, 11.2f,
+         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, y + 1, labelSize.width + 8, 34));
+    float swatchX = 30 + labelSize.width + 13;
+    gfx::Color color = gfx::Rgb(GetFieldValue(FieldRef{6, baseField}),
+                                GetFieldValue(FieldRef{6, baseField + 1}),
+                                GetFieldValue(FieldRef{6, baseField + 2}));
+    FillRound(renderTarget_.Get(), brush_.Get(), color, R(swatchX, y + 8, 18, 18), 6);
+    StrokeRound(renderTarget_.Get(), brush_.Get(), theme.border, R(swatchX, y + 8, 18, 18), 6,
+                1.0f);
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"RGB", 8.3f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(swatchX + 25, y + 1, 60, 34));
+
+    DrawColorField(theme, 6, baseField, R(346, y, 58, 36));
+    DrawColorField(theme, 6, baseField + 1, R(410, y, 58, 36));
+    DrawColorField(theme, 6, baseField + 2, R(474, y, 58, 36));
+}
+
+void ControlPanel::RenderColorPage(const Theme& theme) {
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"06   /   DYNAMIC COLOR", 8.4f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 321, 300, 14));
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"色彩", 20.0f,
+         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, 336, 300, 30));
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
+         L"主色、辅色、强调色与发光色分工驱动整套视觉", 9.2f, DWRITE_FONT_WEIGHT_NORMAL,
+         theme.muted, R(30, 365, 430, 16));
+
+    AddHit(HitKind::ColorEnable, -1, -1, R(452, 329, 82, 44));
+    DrawToggle(theme, R(462, 338, 46, 26), settings_->colors.enabled,
+               IsHovered(HitKind::ColorEnable, -1, -1));
+
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"配色预设", 9.0f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 390, 220, 16));
+    if (settings_->colors.preset < 0) {
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"自定义", 8.3f,
+             DWRITE_FONT_WEIGHT_NORMAL, theme.accent, R(470, 390, 62, 16),
+             DWRITE_TEXT_ALIGNMENT_TRAILING);
+    }
+    const float chipW = (kContentWidth - 4 * 8.0f) / 5.0f;
+    for (int i = 0; i < 5; ++i) {
+        const ColorPreset& preset = kColorPresets[i];
+        D2D1_RECT_F chip = R(kMargin + i * (chipW + 8.0f), 408, chipW, 36);
+        bool selected = settings_->colors.preset == i;
+        bool hovered = IsHovered(HitKind::ColorPreset, i, -1);
+        FillRound(renderTarget_.Get(), brush_.Get(),
+                  selected ? theme.accentSoft : hovered ? theme.surfaceHover : theme.surface,
+                  chip, 10);
+        StrokeRound(renderTarget_.Get(), brush_.Get(),
+                    selected ? theme.accent.WithAlpha(190) : theme.border, chip, 10,
+                    selected ? 1.3f : 1.0f);
+        float dotY = (chip.top + chip.bottom) * 0.5f;
+        FillCircle(renderTarget_.Get(), brush_.Get(),
+                   gfx::Rgb(preset.primaryR, preset.primaryG, preset.primaryB),
+                   chip.left + 11, dotY, 4.0f);
+        FillCircle(renderTarget_.Get(), brush_.Get(),
+                   gfx::Rgb(preset.secondaryR, preset.secondaryG, preset.secondaryB),
+                   chip.left + 21, dotY, 3.5f);
+        FillCircle(renderTarget_.Get(), brush_.Get(),
+                   gfx::Rgb(preset.accentR, preset.accentG, preset.accentB),
+                   chip.left + 30, dotY, 3.2f);
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), preset.name, 9.2f,
+             DWRITE_FONT_WEIGHT_SEMI_BOLD, selected ? theme.text : theme.muted,
+             R(chip.left + 38, chip.top, chip.right - chip.left - 42, 36));
+        AddHit(HitKind::ColorPreset, i, -1, chip);
+    }
+
+    DrawColorRoleRow(theme, 0, L"主色", 452);
+    DrawColorRoleRow(theme, 3, L"辅色", 494);
+    DrawColorRoleRow(theme, 6, L"强调色", 536);
+    DrawColorRoleRow(theme, 9, L"发光色", 578);
+
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"动态行为", 9.0f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 622, 220, 16));
+    const wchar_t* behaviors[] = {L"频谱渐变", L"低音爆闪", L"时间流光"};
+    const bool behaviorValues[] = {settings_->colors.spectrumGradient,
+                                   settings_->colors.bassFlash,
+                                   settings_->colors.timeFlow};
+    const float behaviorW = (kContentWidth - 2 * 8.0f) / 3.0f;
+    for (int i = 0; i < 3; ++i) {
+        D2D1_RECT_F chip = R(kMargin + i * (behaviorW + 8.0f), 638, behaviorW, 34);
+        bool hovered = IsHovered(HitKind::ColorBehavior, i, -1);
+        bool on = behaviorValues[i];
+        FillRound(renderTarget_.Get(), brush_.Get(),
+                  on ? theme.accentSoft : hovered ? theme.surfaceHover : theme.surface, chip,
+                  10);
+        StrokeRound(renderTarget_.Get(), brush_.Get(),
+                    on ? theme.accent.WithAlpha(170) : theme.border, chip, 10, 1.0f);
+        FillCircle(renderTarget_.Get(), brush_.Get(), on ? theme.accent : theme.faint,
+                   chip.left + 16, (chip.top + chip.bottom) * 0.5f, 3.2f);
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), behaviors[i], 9.2f,
+             DWRITE_FONT_WEIGHT_NORMAL, on ? theme.text : theme.muted,
+             R(chip.left + 25, chip.top, chip.right - chip.left - 30, 34));
+        AddHit(HitKind::ColorBehavior, i, -1, chip);
+    }
+
+    DrawSliderRow(theme, 7, 0, L"动态强度", 686);
+    DrawSliderRow(theme, 7, 1, L"流光速度", 734);
+    DrawSliderRow(theme, 7, 2, L"过渡 ms", 782);
+}
+
 void ControlPanel::RenderAppearancePage(const Theme& theme) {
-    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"06   /   APPEARANCE", 8.4f,
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"07   /   APPEARANCE", 8.4f,
          DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 321, 300, 14));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"外观", 20.0f,
          DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, 336, 300, 30));
@@ -496,12 +602,18 @@ void ControlPanel::RenderAppearancePage(const Theme& theme) {
     DrawSliderRow(theme, 3, 3, L"透明度", 484);
     DrawSliderRow(theme, 3, 4, L"Bloom 范围", 532);
     DrawSliderRow(theme, 3, 5, L"Bloom 亮度", 580);
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"动态色彩", 10.2f,
+         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, 636, 250, 18));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
-         L"浮窗缩放作用于全部图层；Bloom 范围控制扩散、亮度控制强度", 8.2f,
-         DWRITE_FONT_WEIGHT_NORMAL, theme.faint, R(30, 618, 490, 16));
+         L"主色 / 辅色 / 强调色 / 发光色 · 在「色彩」页调节", 8.2f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 654, 430, 15));
+    const D2D1_RECT_F colorToggle = R(462, 632, 46, 26);
+    DrawToggle(theme, colorToggle, settings_->colors.enabled,
+               IsHovered(HitKind::ColorEnable, -1, -1));
+    AddHit(HitKind::ColorEnable, -1, -1, R(430, 624, 110, 44));
 
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"快捷主题", 9.0f,
-         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 640, 200, 16));
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 676, 200, 16));
     struct Preset {
         const wchar_t* name;
         int r, g, b;
@@ -514,7 +626,7 @@ void ControlPanel::RenderAppearancePage(const Theme& theme) {
     };
     const float chipW = (kContentWidth - 3 * 8.0f) / 4.0f;
     for (int i = 0; i < 4; ++i) {
-        D2D1_RECT_F chip = R(kMargin + i * (chipW + 8.0f), 658, chipW, 38);
+        D2D1_RECT_F chip = R(kMargin + i * (chipW + 8.0f), 694, chipW, 38);
         bool hovered = IsHovered(HitKind::Preset, i, -1);
         bool selected = settings_->panelR == presets[i].r && settings_->panelG == presets[i].g &&
                         settings_->panelB == presets[i].b;
@@ -531,8 +643,8 @@ void ControlPanel::RenderAppearancePage(const Theme& theme) {
         AddHit(HitKind::Preset, i, -1, chip);
     }
 
-    const D2D1_RECT_F recenter = R(kMargin, 706, 246, 54);
-    const D2D1_RECT_F reset = R(286, 706, 246, 54);
+    const D2D1_RECT_F recenter = R(kMargin, 740, 246, 54);
+    const D2D1_RECT_F reset = R(286, 740, 246, 54);
     bool recenterHover = IsHovered(HitKind::Recenter, -1, -1);
     bool resetHover = IsHovered(HitKind::Reset, -1, -1);
     FillRound(renderTarget_.Get(), brush_.Get(),
@@ -542,22 +654,22 @@ void ControlPanel::RenderAppearancePage(const Theme& theme) {
     StrokeRound(renderTarget_.Get(), brush_.Get(), theme.border, recenter, 13, 1.0f);
     StrokeRound(renderTarget_.Get(), brush_.Get(), theme.border, reset, 13, 1.0f);
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"重新居中浮窗", 10.6f,
-         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(44, 713, 200, 20));
+         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(44, 747, 200, 20));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"让声环回到主屏中央", 8.2f,
-         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(44, 732, 200, 15));
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(44, 766, 200, 15));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"恢复默认外观", 10.6f,
-         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(302, 713, 200, 20));
+         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(302, 747, 200, 20));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"效果颜色与面板配色", 8.2f,
-         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(302, 732, 200, 15));
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(302, 766, 200, 15));
     AddHit(HitKind::Recenter, -1, -1, recenter);
     AddHit(HitKind::Reset, -1, -1, reset);
 
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
          L"预设自动保存于程序目录  ·  presets.ini", 8.1f,
-         DWRITE_FONT_WEIGHT_NORMAL, theme.faint, R(30, 772, 500, 16));
+         DWRITE_FONT_WEIGHT_NORMAL, theme.faint, R(30, 806, 500, 16));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
-         L"AURA 1.7   ·   Windows 11", 8.0f, DWRITE_FONT_WEIGHT_NORMAL, theme.faint,
-         R(30, 792, 500, 16));
+         L"AURA 1.6.0   ·   Windows 11", 8.0f, DWRITE_FONT_WEIGHT_NORMAL, theme.faint,
+         R(30, 828, 500, 16));
 }
 
 void ControlPanel::RenderFooter(const Theme& theme, int) {

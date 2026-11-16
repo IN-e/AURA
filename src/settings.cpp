@@ -73,6 +73,7 @@ const wchar_t* kOverlaySection = L"overlay";
 const wchar_t* kSourceSection = L"source";
 const wchar_t* kShardsSection = L"effect.shards";
 const wchar_t* kGlowSection = L"effect.glow";
+const wchar_t* kColorSection = L"color";
 
 EffectConfig ReadEffect(const std::wstring& path, const wchar_t* section,
                         const EffectConfig& defaults, int index) {
@@ -265,6 +266,54 @@ VisualSettings SettingsStore::Load() const {
         GetPrivateProfileIntW(kGlowSection, L"opacity", settings.glow.opacity, path_.c_str()),
         0, 100);
 
+    DynamicColorSettings& colors = settings.colors;
+    colors.enabled =
+        GetPrivateProfileIntW(kColorSection, L"enabled", colors.enabled ? 1 : 0,
+                              path_.c_str()) != 0;
+    colors.preset =
+        ClampInt(GetPrivateProfileIntW(kColorSection, L"preset", colors.preset, path_.c_str()),
+                 -1, 4);
+    colors.primaryR = ClampInt(GetPrivateProfileIntW(kColorSection, L"pR", colors.primaryR,
+                                                    path_.c_str()), 0, 255);
+    colors.primaryG = ClampInt(GetPrivateProfileIntW(kColorSection, L"pG", colors.primaryG,
+                                                    path_.c_str()), 0, 255);
+    colors.primaryB = ClampInt(GetPrivateProfileIntW(kColorSection, L"pB", colors.primaryB,
+                                                    path_.c_str()), 0, 255);
+    colors.secondaryR = ClampInt(GetPrivateProfileIntW(kColorSection, L"sR", colors.secondaryR,
+                                                      path_.c_str()), 0, 255);
+    colors.secondaryG = ClampInt(GetPrivateProfileIntW(kColorSection, L"sG", colors.secondaryG,
+                                                      path_.c_str()), 0, 255);
+    colors.secondaryB = ClampInt(GetPrivateProfileIntW(kColorSection, L"sB", colors.secondaryB,
+                                                      path_.c_str()), 0, 255);
+    colors.accentR = ClampInt(GetPrivateProfileIntW(kColorSection, L"aR", colors.accentR,
+                                                   path_.c_str()), 0, 255);
+    colors.accentG = ClampInt(GetPrivateProfileIntW(kColorSection, L"aG", colors.accentG,
+                                                   path_.c_str()), 0, 255);
+    colors.accentB = ClampInt(GetPrivateProfileIntW(kColorSection, L"aB", colors.accentB,
+                                                   path_.c_str()), 0, 255);
+    colors.glowR = ClampInt(GetPrivateProfileIntW(kColorSection, L"gR", colors.glowR,
+                                                 path_.c_str()), 0, 255);
+    colors.glowG = ClampInt(GetPrivateProfileIntW(kColorSection, L"gG", colors.glowG,
+                                                 path_.c_str()), 0, 255);
+    colors.glowB = ClampInt(GetPrivateProfileIntW(kColorSection, L"gB", colors.glowB,
+                                                 path_.c_str()), 0, 255);
+    colors.spectrumGradient =
+        GetPrivateProfileIntW(kColorSection, L"spectrumGradient",
+                              colors.spectrumGradient ? 1 : 0, path_.c_str()) != 0;
+    colors.bassFlash =
+        GetPrivateProfileIntW(kColorSection, L"bassFlash", colors.bassFlash ? 1 : 0,
+                              path_.c_str()) != 0;
+    colors.timeFlow =
+        GetPrivateProfileIntW(kColorSection, L"timeFlow", colors.timeFlow ? 1 : 0,
+                              path_.c_str()) != 0;
+    colors.intensity = ClampInt(GetPrivateProfileIntW(kColorSection, L"intensity",
+                                                     colors.intensity, path_.c_str()), 0, 200);
+    colors.flowSpeed = ClampInt(GetPrivateProfileIntW(kColorSection, L"flowSpeed",
+                                                     colors.flowSpeed, path_.c_str()), 0, 200);
+    colors.transitionMs = ClampInt(GetPrivateProfileIntW(kColorSection, L"transitionMs",
+                                                        colors.transitionMs, path_.c_str()),
+                                   0, 2000);
+
     settings.panelR = ClampInt(GetPrivateProfileIntW(kPanelSection, L"r", settings.panelR,
                                                     path_.c_str()), 0, 255);
     settings.panelG = ClampInt(GetPrivateProfileIntW(kPanelSection, L"g", settings.panelG,
@@ -336,6 +385,32 @@ void SettingsStore::Save(const VisualSettings& settings) const {
     writeGlow(L"b", settings.glow.b);
     writeGlow(L"size", settings.glow.size);
     writeGlow(L"opacity", settings.glow.opacity);
+
+    auto writeColor = [&](const wchar_t* key, int number) {
+        WritePrivateProfileStringW(kColorSection, key, std::to_wstring(number).c_str(),
+                                   path_.c_str());
+    };
+    const DynamicColorSettings& colors = settings.colors;
+    writeColor(L"enabled", colors.enabled ? 1 : 0);
+    writeColor(L"preset", colors.preset);
+    writeColor(L"pR", colors.primaryR);
+    writeColor(L"pG", colors.primaryG);
+    writeColor(L"pB", colors.primaryB);
+    writeColor(L"sR", colors.secondaryR);
+    writeColor(L"sG", colors.secondaryG);
+    writeColor(L"sB", colors.secondaryB);
+    writeColor(L"aR", colors.accentR);
+    writeColor(L"aG", colors.accentG);
+    writeColor(L"aB", colors.accentB);
+    writeColor(L"gR", colors.glowR);
+    writeColor(L"gG", colors.glowG);
+    writeColor(L"gB", colors.glowB);
+    writeColor(L"spectrumGradient", colors.spectrumGradient ? 1 : 0);
+    writeColor(L"bassFlash", colors.bassFlash ? 1 : 0);
+    writeColor(L"timeFlow", colors.timeFlow ? 1 : 0);
+    writeColor(L"intensity", colors.intensity);
+    writeColor(L"flowSpeed", colors.flowSpeed);
+    writeColor(L"transitionMs", colors.transitionMs);
 
     auto writePanel = [&](const wchar_t* key, int number) {
         WritePrivateProfileStringW(kPanelSection, key, std::to_wstring(number).c_str(),

@@ -83,6 +83,97 @@ bool AnyEffectVisible(const VisualSettings& settings) {
            (settings.shards.enabled && settings.shards.opacity > 0) ||
            (settings.glow.enabled && settings.glow.opacity > 0);
 }
+
+gfx::Color RgbColor(int r, int g, int b) {
+    gfx::Color color;
+    color.r = r;
+    color.g = g;
+    color.b = b;
+    color.a = 255;
+    return color;
+}
+
+gfx::Color LerpColor(const gfx::Color& a, const gfx::Color& b, float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    gfx::Color result;
+    result.r = static_cast<int>(std::lround(a.r + (b.r - a.r) * t));
+    result.g = static_cast<int>(std::lround(a.g + (b.g - a.g) * t));
+    result.b = static_cast<int>(std::lround(a.b + (b.b - a.b) * t));
+    result.a = static_cast<int>(std::lround(a.a + (b.a - a.a) * t));
+    return result;
+}
+
+int ColorDistance(const gfx::Color& a, const gfx::Color& b) {
+    return std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b);
+}
+
+struct HslColor {
+    float h = 0.0f;
+    float s = 0.0f;
+    float l = 0.0f;
+};
+
+HslColor ToHsl(const gfx::Color& color) {
+    float r = color.r / 255.0f;
+    float g = color.g / 255.0f;
+    float b = color.b / 255.0f;
+    float maxC = std::max({r, g, b});
+    float minC = std::min({r, g, b});
+    float delta = maxC - minC;
+    HslColor hsl;
+    hsl.l = (maxC + minC) * 0.5f;
+    if (delta <= 0.00001f) return hsl;
+    hsl.s = delta / (1.0f - std::fabs(2.0f * hsl.l - 1.0f) + 0.00001f);
+    if (maxC == r) {
+        hsl.h = 60.0f * std::fmod((g - b) / delta, 6.0f);
+    } else if (maxC == g) {
+        hsl.h = 60.0f * ((b - r) / delta + 2.0f);
+    } else {
+        hsl.h = 60.0f * ((r - g) / delta + 4.0f);
+    }
+    if (hsl.h < 0.0f) hsl.h += 360.0f;
+    return hsl;
+}
+
+gfx::Color FromHsl(const HslColor& hsl, int alpha) {
+    float h = std::fmod(hsl.h, 360.0f);
+    if (h < 0.0f) h += 360.0f;
+    float s = std::clamp(hsl.s, 0.0f, 1.0f);
+    float l = std::clamp(hsl.l, 0.0f, 1.0f);
+    float c = (1.0f - std::fabs(2.0f * l - 1.0f)) * s;
+    float x = c * (1.0f - std::fabs(std::fmod(h / 60.0f, 2.0f) - 1.0f));
+    float m = l - c * 0.5f;
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    if (h < 60.0f) {
+        r = c; g = x;
+    } else if (h < 120.0f) {
+        r = x; g = c;
+    } else if (h < 180.0f) {
+        g = c; b = x;
+    } else if (h < 240.0f) {
+        g = x; b = c;
+    } else if (h < 300.0f) {
+        r = x; b = c;
+    } else {
+        r = c; b = x;
+    }
+    gfx::Color color;
+    color.r = static_cast<int>(std::lround(std::clamp(r + m, 0.0f, 1.0f) * 255.0f));
+    color.g = static_cast<int>(std::lround(std::clamp(g + m, 0.0f, 1.0f) * 255.0f));
+    color.b = static_cast<int>(std::lround(std::clamp(b + m, 0.0f, 1.0f) * 255.0f));
+    color.a = alpha;
+    return color;
+}
+
+gfx::Color ShiftColor(const gfx::Color& color, float hueDegrees, float lightMul,
+                      float lightAdd, float satMul) {
+    HslColor hsl = ToHsl(color);
+    hsl.h += hueDegrees;
+    hsl.l = std::clamp(hsl.l * lightMul + lightAdd, 0.0f, 1.0f);
+    hsl.s = std::clamp(hsl.s * satMul, 0.0f, 1.0f);
+    return FromHsl(hsl, color.a);
+}
+
 }  // namespace
 
 Overlay::Overlay() {
@@ -516,15 +607,17 @@ bool Overlay::RenderGlowLayer() {
     }
     if (glowReady_ && !glowDirty_) return true;
 
+    const gfx::Color glowColor =
+        settings_->colors.enabled ? dynamicRender_.glow : RgbColor(glow.r, glow.g, glow.b);
     const float scale =
         (dpi_ ? dpi_ : 96) / 96.0f * OverlayUserScale(*settings_);
     const float radius = CenterGlowRadiusLogical(*settings_) * scale;
     if (radius <= 1.0f) return false;
 
     D2D1_GRADIENT_STOP stops[6]{};
-    const float r = glow.r / 255.0f;
-    const float g = glow.g / 255.0f;
-    const float b = glow.b / 255.0f;
+    const float r = glowColor.r / 255.0f;
+    const float g = glowColor.g / 255.0f;
+    const float b = glowColor.b / 255.0f;
     stops[0] = D2D1::GradientStop(0.00f, D2D1::ColorF(r, g, b, 0.72f));
     stops[1] = D2D1::GradientStop(0.30f, D2D1::ColorF(r, g, b, 0.62f));
     stops[2] = D2D1::GradientStop(0.55f, D2D1::ColorF(r, g, b, 0.44f));
@@ -750,9 +843,106 @@ void Overlay::UpdateAnalysis(float dt) {
     analyzer_.Update(audioSnapshot_.data(), count, total, newer, dt);
 }
 
+void Overlay::UpdateDynamicColors(float dt) {
+    if (!settings_) return;
+    const DynamicColorSettings& cfg = settings_->colors;
+    DynamicPalette target;
+    target.primary = RgbColor(cfg.primaryR, cfg.primaryG, cfg.primaryB);
+    target.secondary = RgbColor(cfg.secondaryR, cfg.secondaryG, cfg.secondaryB);
+    target.accent = RgbColor(cfg.accentR, cfg.accentG, cfg.accentB);
+    target.glow = RgbColor(cfg.glowR, cfg.glowG, cfg.glowB);
+
+    if (!dynamicInitialized_) {
+        dynamicCurrent_ = target;
+        dynamicStart_ = target;
+        dynamicTarget_ = target;
+        dynamicLastTarget_ = target;
+        dynamicProgress_ = 1.0f;
+        dynamicInitialized_ = true;
+    } else if (!cfg.enabled) {
+        dynamicCurrent_ = target;
+        dynamicStart_ = target;
+        dynamicTarget_ = target;
+        dynamicLastTarget_ = target;
+        dynamicProgress_ = 1.0f;
+    } else {
+        const bool changed =
+            ColorDistance(target.primary, dynamicLastTarget_.primary) > 0 ||
+            ColorDistance(target.secondary, dynamicLastTarget_.secondary) > 0 ||
+            ColorDistance(target.accent, dynamicLastTarget_.accent) > 0 ||
+            ColorDistance(target.glow, dynamicLastTarget_.glow) > 0;
+        if (changed) {
+            dynamicStart_ = dynamicCurrent_;
+            dynamicTarget_ = target;
+            dynamicLastTarget_ = target;
+            dynamicProgress_ = 0.0f;
+        }
+        const float duration = std::max(0.02f, cfg.transitionMs / 1000.0f);
+        dynamicProgress_ = std::min(1.0f, dynamicProgress_ + dt / duration);
+        float t = dynamicProgress_;
+        t = t * t * (3.0f - 2.0f * t);
+        dynamicCurrent_.primary = LerpColor(dynamicStart_.primary, dynamicTarget_.primary, t);
+        dynamicCurrent_.secondary =
+            LerpColor(dynamicStart_.secondary, dynamicTarget_.secondary, t);
+        dynamicCurrent_.accent = LerpColor(dynamicStart_.accent, dynamicTarget_.accent, t);
+        dynamicCurrent_.glow = LerpColor(dynamicStart_.glow, dynamicTarget_.glow, t);
+    }
+
+    dynamicRender_ = dynamicCurrent_;
+    if (!cfg.enabled) return;
+
+    const float intensity = std::clamp(cfg.intensity, 0, 200) / 100.0f;
+    const float flow = std::clamp(cfg.flowSpeed, 0, 200) / 100.0f;
+    const float level = analyzer_.Level();
+    const float bass = cfg.bassFlash ? analyzer_.BassLevel() : 0.0f;
+    float hueShift = level * 22.0f * intensity;
+    if (cfg.timeFlow) hueShift += elapsed_ * 7.0f * flow;
+
+    const float bright = 1.0f + level * 0.16f * intensity;
+    dynamicRender_.primary =
+        ShiftColor(dynamicCurrent_.primary, hueShift, bright, 0.0f, 1.0f + level * 0.08f);
+    dynamicRender_.secondary =
+        ShiftColor(dynamicCurrent_.secondary, hueShift + 8.0f, bright, 0.0f, 1.0f);
+    dynamicRender_.accent =
+        ShiftColor(dynamicCurrent_.accent, hueShift - 6.0f, bright,
+                   0.0f + bass * 0.30f * intensity, 1.0f + bass * 0.18f);
+    dynamicRender_.glow = dynamicCurrent_.glow;
+
+    if (ColorDistance(dynamicRender_.glow, lastGlowCacheColor_) > 2 &&
+        elapsed_ - lastGlowCacheTime_ > 0.08f) {
+        glowDirty_ = true;
+        lastGlowCacheColor_ = dynamicRender_.glow;
+        lastGlowCacheTime_ = elapsed_;
+    }
+}
+
+gfx::Color Overlay::DynamicOuterColor(float position) const {
+    const DynamicColorSettings& cfg = settings_->colors;
+    float phase = position;
+    if (cfg.timeFlow) {
+        phase += elapsed_ * 0.05f * (std::clamp(cfg.flowSpeed, 0, 200) / 100.0f);
+    }
+    phase += analyzer_.Level() * 0.08f * (std::clamp(cfg.intensity, 0, 200) / 100.0f);
+    phase -= std::floor(phase);
+
+    float band = analyzer_.BandCyclic(position + 0.08f);
+    float t = std::clamp(band * 0.70f + phase * 0.30f, 0.0f, 1.0f);
+    gfx::Color color;
+    if (t < 0.5f) {
+        color = LerpColor(dynamicRender_.primary, dynamicRender_.accent, t * 2.0f);
+    } else {
+        color = LerpColor(dynamicRender_.accent, dynamicRender_.secondary,
+                          (t - 0.5f) * 2.0f);
+    }
+    float gain = 0.82f + band * 0.34f +
+                 analyzer_.Level() * 0.10f * (std::clamp(cfg.intensity, 0, 200) / 100.0f);
+    return ShiftColor(color, 0.0f, gain, 0.0f, 1.0f);
+}
+
 void Overlay::RenderFrame(float dt) {
     if (!graphicsReady_ || !hwnd_) return;
     UpdateAnalysis(dt);
+    UpdateDynamicColors(dt);
     UpdateShards(dt);
     UpdateBloomParameters();
     const float scale =
@@ -1023,7 +1213,9 @@ void Overlay::DrawShards(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush,
             D2D1::Matrix3x2F::Translation(x, y);
         target->SetTransform(transform);
 
-        gfx::Color fill = gfx::Rgb(cfg.r, cfg.g, cfg.b);
+        gfx::Color fill = settings_->colors.enabled
+                              ? dynamicRender_.primary
+                              : gfx::Rgb(cfg.r, cfg.g, cfg.b);
         fill.a = static_cast<int>(std::lround(255.0f * alpha));
         brush->SetColor(fill.D2D());
         target->FillGeometry(shardGeometries_[particle.shape].Get(), brush);
@@ -1044,6 +1236,13 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     const EffectConfig& outerCfg = settings_->outer;
     const EffectConfig& dotsCfg = settings_->dots;
     const EffectConfig& waveCfg = settings_->wave;
+    const bool dynamicColors = settings_->colors.enabled;
+    const gfx::Color outerColor =
+        dynamicColors ? dynamicRender_.primary : gfx::Rgb(outerCfg.r, outerCfg.g, outerCfg.b);
+    const gfx::Color dotsColor =
+        dynamicColors ? dynamicRender_.secondary : gfx::Rgb(dotsCfg.r, dotsCfg.g, dotsCfg.b);
+    const gfx::Color waveColor =
+        dynamicColors ? dynamicRender_.accent : gfx::Rgb(waveCfg.r, waveCfg.g, waveCfg.b);
 
     const float tau = 6.2831853f;
     auto wrap = [](float value) {
@@ -1151,22 +1350,81 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     }
 
     if (outerCfg.enabled && outerCfg.opacity > 0) {
-        VisualPath outerPath = BuildRingPath(outerPoints);
         VisualPath innerPath = BuildRingPath(innerPoints);
         VisualPath meshPath = BuildMeshPath(outerPoints, innerPoints);
-        gfx::Color color = gfx::Rgb(outerCfg.r, outerCfg.g, outerCfg.b);
         float opacity = outerCfg.opacity / 100.0f;
         if (meshPath.valid) {
-            DrawGlowGeometry(target, brush, meshPath.geometry.Get(), color, opacity * 0.42f,
-                             0.72f * scale * thickness);
+            DrawGlowGeometry(target, brush, meshPath.geometry.Get(), outerColor,
+                             opacity * 0.42f, 0.72f * scale * thickness);
         }
-        if (outerPath.valid) {
-            DrawGlowGeometry(target, brush, outerPath.geometry.Get(), color, opacity,
-                             1.55f * scale * thickness);
+
+        if (dynamicColors && settings_->colors.spectrumGradient) {
+            // The outer contour becomes a spectrum-mapped light tube: warm /
+            // primary at low energy, accent through the mids and secondary at
+            // the bright end. The phase also drifts with time.
+            const int groups = std::min(12, densityOuter);
+            for (int group = 0; group < groups; ++group) {
+                int start = group * densityOuter / groups;
+                int end = (group + 1) * densityOuter / groups;
+                if (end <= start) continue;
+                std::vector<D2D1_POINT_2F> segment;
+                int first = start == 0 ? 0 : start - 1;
+                segment.reserve(end - first + 2);
+                for (int i = first; i <= end && i < densityOuter; ++i) {
+                    segment.push_back(outerPoints[i]);
+                }
+                if (end >= densityOuter) segment.push_back(outerPoints[0]);
+                VisualPath segmentPath = BuildRingPath(segment, false);
+                if (!segmentPath.valid) continue;
+
+                float pStart = static_cast<float>(start) / densityOuter;
+                float pEnd = end >= densityOuter ? 0.0f
+                                                 : static_cast<float>(end) / densityOuter;
+                gfx::Color startColor = DynamicOuterColor(pStart);
+                gfx::Color endColor = DynamicOuterColor(pEnd);
+                D2D1_POINT_2F startPoint = outerPoints[start];
+                D2D1_POINT_2F endPoint =
+                    end >= densityOuter ? outerPoints[0] : outerPoints[end];
+
+                // Blend across each segment so adjacent color nodes share the
+                // exact endpoint color instead of snapping between flat colors.
+                D2D1_GRADIENT_STOP stops[2]{};
+                stops[0] = D2D1::GradientStop(0.0f, startColor.D2D());
+                stops[1] = D2D1::GradientStop(1.0f, endColor.D2D());
+                ComPtr<ID2D1GradientStopCollection> collection;
+                ComPtr<ID2D1LinearGradientBrush> gradient;
+                bool gradientReady = false;
+                if (SUCCEEDED(target->CreateGradientStopCollection(
+                        stops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &collection)) &&
+                    collection &&
+                    SUCCEEDED(target->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(startPoint, endPoint),
+                        collection.Get(), &gradient)) &&
+                    gradient) {
+                    gradient->SetOpacity(opacity);
+                    gradientReady = true;
+                }
+
+                if (gradientReady) {
+                    target->DrawGeometry(segmentPath.geometry.Get(), gradient.Get(),
+                                         1.55f * scale * thickness, strokeStyle_.Get());
+                } else {
+                    DrawGlowGeometry(target, brush, segmentPath.geometry.Get(),
+                                     LerpColor(startColor, endColor, 0.5f), opacity,
+                                     1.55f * scale * thickness);
+                }
+            }
+        } else {
+            VisualPath outerPath = BuildRingPath(outerPoints);
+            if (outerPath.valid) {
+                DrawGlowGeometry(target, brush, outerPath.geometry.Get(), outerColor, opacity,
+                                 1.55f * scale * thickness);
+            }
         }
+
         if (innerPath.valid) {
-            DrawGlowGeometry(target, brush, innerPath.geometry.Get(), color, opacity * 0.94f,
-                             1.25f * scale * thickness);
+            DrawGlowGeometry(target, brush, innerPath.geometry.Get(), outerColor,
+                             opacity * 0.94f, 1.25f * scale * thickness);
         }
     }
 
@@ -1175,7 +1433,7 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
         const float baseDotR = (48.0f + 1.03f * dotsCfg.size) * scale;
         const float dotAmp = (4.0f + 0.15f * dotsCfg.amplitude) * scale;
         const float dotThickness = 0.55f + 0.45f * (dotsCfg.thickness / 100.0f);
-        gfx::Color color = gfx::Rgb(dotsCfg.r, dotsCfg.g, dotsCfg.b);
+        const gfx::Color& color = dotsColor;
         const float opacity = dotsCfg.opacity / 100.0f;
         for (int i = 0; i < densityDots; ++i) {
             float p = static_cast<float>(i) / densityDots;
@@ -1198,61 +1456,71 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
         const float waveAmp = (3.0f + 0.23f * waveCfg.amplitude) * scale;
         const float waveThickness = waveCfg.thickness / 100.0f;
         const float opacity = waveCfg.opacity / 100.0f;
-        gfx::Color color = gfx::Rgb(waveCfg.r, waveCfg.g, waveCfg.b);
+        const gfx::Color& color = waveColor;
 
-        gfx::Color baseline = color;
-        baseline.a = static_cast<int>(std::lround(color.a * opacity * 0.23f));
-        brush->SetColor(baseline.D2D());
-        target->DrawLine(D2D1::Point2F(cx - halfWidth, cy),
-                         D2D1::Point2F(cx + halfWidth, cy), brush,
-                         0.7f * scale * waveThickness, strokeStyle_.Get());
-
-        std::vector<float> data(densityWave, 128.0f);
-        std::vector<float> averaged(densityWave, 128.0f);
-        for (int i = 0; i < densityWave; ++i) {
-            float t = static_cast<float>(i) / std::max(1, densityWave - 1);
-            float normalized = analyzer_.TimeDomainAt(0.50f + t * 0.50f);
-            data[i] = (normalized * 0.5f + 0.5f) * 255.0f;
+        // A horizontal gradient makes both ends dissolve instead of finishing
+        // in the old fixed endpoint dots. The same ramp is used by the center
+        // baseline so the line has no visible hard caps.
+        const float left = cx - halfWidth;
+        const float right = cx + halfWidth;
+        const float fade = 0.075f;
+        D2D1_GRADIENT_STOP fadeStops[4]{};
+        fadeStops[0] = D2D1::GradientStop(
+            0.0f, D2D1::ColorF(color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, 0.0f));
+        fadeStops[1] = D2D1::GradientStop(
+            fade, D2D1::ColorF(color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, 1.0f));
+        fadeStops[2] = D2D1::GradientStop(
+            1.0f - fade, D2D1::ColorF(color.r / 255.0f, color.g / 255.0f,
+                                       color.b / 255.0f, 1.0f));
+        fadeStops[3] = D2D1::GradientStop(
+            1.0f, D2D1::ColorF(color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, 0.0f));
+        ComPtr<ID2D1GradientStopCollection> fadeCollection;
+        ComPtr<ID2D1LinearGradientBrush> fadeBrush;
+        bool fadeReady = false;
+        if (SUCCEEDED(target->CreateGradientStopCollection(
+                fadeStops, 4, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &fadeCollection)) &&
+            fadeCollection &&
+            SUCCEEDED(target->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(D2D1::Point2F(left, cy),
+                                                    D2D1::Point2F(right, cy)),
+                fadeCollection.Get(), &fadeBrush)) &&
+            fadeBrush) {
+            fadeReady = true;
         }
 
-        // Two passes of a 3-point moving average: smooth and rounded, without
-        // the single-pixel fizz of raw oscilloscope data.
-        for (int pass = 0; pass < 2; ++pass) {
-            for (int i = 0; i < densityWave; ++i) {
-                int prev = std::max(0, i - 1);
-                int next = std::min(densityWave - 1, i + 1);
-                averaged[i] = (data[prev] + data[i] + data[next]) / 3.0f;
+        if (fadeReady) {
+            fadeBrush->SetOpacity(opacity * 0.23f);
+            target->DrawLine(D2D1::Point2F(left, cy), D2D1::Point2F(right, cy),
+                             fadeBrush.Get(), 0.7f * scale * waveThickness,
+                             strokeStyle_.Get());
+        } else {
+            gfx::Color baseline = color;
+            baseline.a = static_cast<int>(std::lround(color.a * opacity * 0.23f));
+            brush->SetColor(baseline.D2D());
+            target->DrawLine(D2D1::Point2F(left, cy), D2D1::Point2F(right, cy), brush,
+                             0.7f * scale * waveThickness, strokeStyle_.Get());
+        }
+
+        std::vector<D2D1_POINT_2F> points;
+        points.reserve(densityWave);
+        for (int i = 0; i < densityWave; ++i) {
+            float t = static_cast<float>(i) / std::max(1, densityWave - 1);
+            // 1.6.0 single-line time-domain oscilloscope.
+            float wave = analyzer_.TimeDomainAt(0.50f + t * 0.50f);
+            float x = left + t * halfWidth * 2.0f;
+            float y = cy + wave * waveAmp;
+            points.push_back(D2D1::Point2F(x, y));
+        }
+        VisualPath path = BuildRingPath(points, false);
+        if (path.valid) {
+            if (fadeReady) {
+                fadeBrush->SetOpacity(opacity);
+                target->DrawGeometry(path.geometry.Get(), fadeBrush.Get(),
+                                     1.25f * scale * waveThickness, strokeStyle_.Get());
+            } else {
+                DrawGlowGeometry(target, brush, path.geometry.Get(), color, opacity,
+                                 1.25f * scale * waveThickness);
             }
-            data.swap(averaged);
-        }
-
-        // Exact mirrored waveform around centerY. The dead zone is in the same
-        // 0..255 / center-128 units as the reference math.
-        constexpr float kCenterValue = 128.0f;
-        constexpr float kDeadZone = 5.0f;
-        const float verticalScale = waveAmp / 128.0f * 1.5f;
-        std::vector<D2D1_POINT_2F> topPoints;
-        std::vector<D2D1_POINT_2F> bottomPoints;
-        topPoints.reserve(densityWave);
-        bottomPoints.reserve(densityWave);
-        for (int i = 0; i < densityWave; ++i) {
-            float t = static_cast<float>(i) / std::max(1, densityWave - 1);
-            float amplitude = data[i] - kCenterValue;
-            if (std::fabs(amplitude) < kDeadZone) amplitude = 0.0f;
-            float x = cx - halfWidth + t * halfWidth * 2.0f;
-            topPoints.push_back(D2D1::Point2F(x, cy - amplitude * verticalScale));
-            bottomPoints.push_back(D2D1::Point2F(x, cy + amplitude * verticalScale));
-        }
-
-        VisualPath topPath = BuildRingPath(topPoints, false);
-        VisualPath bottomPath = BuildRingPath(bottomPoints, false);
-        if (topPath.valid) {
-            DrawGlowGeometry(target, brush, topPath.geometry.Get(), color, opacity,
-                             1.25f * scale * waveThickness);
-        }
-        if (bottomPath.valid) {
-            DrawGlowGeometry(target, brush, bottomPath.geometry.Get(), color, opacity,
-                             1.25f * scale * waveThickness);
         }
     }
 }

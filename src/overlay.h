@@ -73,6 +73,8 @@ private:
     void DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, float width,
                      float height, float scale, float time);
     void UpdateAnalysis(float dt);
+    void UpdateDynamicColors(float dt);
+    gfx::Color DynamicOuterColor(float position) const;
     bool PointHitsVisual(POINT client) const;
     void UpdateHitRegion();
     void BeginDrag(POINT screen);
@@ -85,6 +87,13 @@ private:
     struct VisualPath {
         ComPtr<ID2D1PathGeometry> geometry;
         bool valid = false;
+    };
+
+    struct DynamicPalette {
+        gfx::Color primary{};
+        gfx::Color secondary{};
+        gfx::Color accent{};
+        gfx::Color glow{};
     };
 
     VisualPath BuildRingPath(const std::vector<D2D1_POINT_2F>& points,
@@ -168,6 +177,16 @@ private:
     float shardAngleCursor_ = 0.0f;
     uint32_t shardRngState_ = 0x9e3779b9u;
     bool bloomReady_ = false;
+
+    DynamicPalette dynamicStart_{};
+    DynamicPalette dynamicTarget_{};
+    DynamicPalette dynamicCurrent_{};
+    DynamicPalette dynamicLastTarget_{};
+    DynamicPalette dynamicRender_{};
+    bool dynamicInitialized_ = false;
+    float dynamicProgress_ = 1.0f;
+    gfx::Color lastGlowCacheColor_{};
+    float lastGlowCacheTime_ = -10.0f;
 
     AudioAnalyzer analyzer_;
     std::vector<float> audioSnapshot_;

@@ -56,6 +56,7 @@ void AudioAnalyzer::Reset() {
     previousBands_.fill(0.0f);
     level_ = 0.0f;
     rawPeak_ = 0.0f;
+    bass_ = 0.0f;
     flux_ = 0.0f;
     gate_ = 0.0f;
     peakEnvelope_ = 0.0f;
@@ -135,10 +136,8 @@ void AudioAnalyzer::Update(const float* samples, size_t count, uint64_t sampleTo
 
         float gain = std::min(9000.0f, waveGain_) * gate_ * 0.80f;
         for (int i = 0; i < kFftSize; ++i) {
-            // Raw time-domain stream, matching analyser.getByteTimeDomainData().
-            // No spectrum, auto-gain, or spatial filtering is applied here; the
-            // horizontal scope performs its own moving average and dead zone.
-            timeDomain_[i] = ClampF(input_[i], -1.0f, 1.0f);
+            // 1.6.0 time-domain data: normalized by the analyzer's display gain.
+            timeDomain_[i] = ClampF(input_[i] * gain * 0.80f, -1.0f, 1.0f);
             float value = input_[i] * gain;
             float prev = input_[i > 0 ? i - 1 : 0];
             float next = input_[i + 1 < kFftSize ? i + 1 : kFftSize - 1];
@@ -154,6 +153,7 @@ void AudioAnalyzer::Update(const float* samples, size_t count, uint64_t sampleTo
         if (silenceTime_ > 0.10f) {
             level_ = Damp(level_, 0.0f, 3.6f, dt);
             rawPeak_ = Damp(rawPeak_, 0.0f, 4.0f, dt);
+            bass_ = Damp(bass_, 0.0f, 4.0f, dt);
             gate_ = Damp(gate_, 0.0f, 3.0f, dt);
             for (int i = 0; i < kBandCount; ++i) bandTargets_[i] = 0.0f;
             for (int i = 0; i < kFftSize; ++i) {
@@ -192,6 +192,12 @@ void AudioAnalyzer::Update(const float* samples, size_t count, uint64_t sampleTo
             if (velocity > 0.0f) velocity = 0.0f;
         }
     }
+
+    float bassSum = 0.0f;
+    constexpr int kBassBands = 24;
+    for (int i = 0; i < kBassBands; ++i) bassSum += bands_[i];
+    float bassTarget = bassSum / static_cast<float>(kBassBands);
+    bass_ = Damp(bass_, bassTarget, bassTarget > bass_ ? 28.0f : 7.0f, dt);
 
     const float waveAttack = 42.0f;
     const float waveRelease = 24.0f;

@@ -13,7 +13,7 @@ using Microsoft::WRL::ComPtr;
 namespace {
 constexpr wchar_t kPanelClass[] = L"AuraSoundRingPanel";
 constexpr int kDesignWidth = 560;
-constexpr int kDesignHeight = 820;
+constexpr int kDesignHeight = 850;
 constexpr int kAppIconId = 101;
 constexpr int kListTop = 212;
 constexpr int kRowHeight = 54;
@@ -405,6 +405,8 @@ void ControlPanel::Render() {
         RenderTabs(theme);
         if (page_ == Page::Appearance) {
             RenderAppearancePage(theme);
+        } else if (page_ == Page::Color) {
+            RenderColorPage(theme);
         } else if (page_ == Page::Shards) {
             RenderShardsPage(theme);
             RenderFooter(theme, 3);
@@ -661,6 +663,31 @@ int ControlPanel::GetFieldValue(const FieldRef& ref) const {
         if (ref.field == 3) return settings_->glow.size;
         return settings_->glow.opacity;
     }
+    if (ref.group == 6) {
+        const DynamicColorSettings& c = settings_->colors;
+        switch (ref.field) {
+            case 0: return c.primaryR;
+            case 1: return c.primaryG;
+            case 2: return c.primaryB;
+            case 3: return c.secondaryR;
+            case 4: return c.secondaryG;
+            case 5: return c.secondaryB;
+            case 6: return c.accentR;
+            case 7: return c.accentG;
+            case 8: return c.accentB;
+            case 9: return c.glowR;
+            case 10: return c.glowG;
+            case 11: return c.glowB;
+            default: return 0;
+        }
+    }
+    if (ref.group == 7) {
+        const DynamicColorSettings& c = settings_->colors;
+        if (ref.field == 0) return c.intensity;
+        if (ref.field == 1) return c.flowSpeed;
+        if (ref.field == 2) return c.transitionMs;
+        return 0;
+    }
     const EffectConfig* config = ConfigForGroup(ref.group);
     if (!config) return 0;
     switch (ref.field) {
@@ -677,6 +704,7 @@ int ControlPanel::GetFieldValue(const FieldRef& ref) const {
 }
 
 int ControlPanel::MinValue(const FieldRef& ref) const {
+    if (ref.group == 6 || ref.group == 7) return 0;
     if (ref.field <= 2) return 0;
     if (ref.group == 3) {
         if (ref.field == 4) return 10;
@@ -702,6 +730,11 @@ int ControlPanel::MinValue(const FieldRef& ref) const {
 }
 
 int ControlPanel::MaxValue(const FieldRef& ref) const {
+    if (ref.group == 6) return 255;
+    if (ref.group == 7) {
+        if (ref.field == 2) return 2000;
+        return 200;
+    }
     if (ref.field <= 2) return 255;
     if (ref.group == 3) {
         if (ref.field == 4 || ref.field == 5 || ref.field == 6) return 200;
@@ -728,6 +761,8 @@ bool ControlPanel::IsPercentField(const FieldRef& ref) const {
     if (ref.group == 3) return ref.field >= 3;
     if (ref.group == 4) return ref.field >= 3;
     if (ref.group == 5) return ref.field >= 3;
+    if (ref.group == 6) return false;
+    if (ref.group == 7) return ref.field == 0 || ref.field == 1;
     return ref.field == 3 || ref.field == 4 || ref.field == 6 || ref.field == 7;
 }
 
@@ -759,6 +794,33 @@ void ControlPanel::SetFieldValue(const FieldRef& ref, int value) {
         else if (ref.field == 2) settings_->glow.b = value;
         else if (ref.field == 3) settings_->glow.size = value;
         else if (ref.field == 4) settings_->glow.opacity = value;
+        return;
+    }
+    if (ref.group == 6) {
+        DynamicColorSettings& c = settings_->colors;
+        switch (ref.field) {
+            case 0: c.primaryR = value; break;
+            case 1: c.primaryG = value; break;
+            case 2: c.primaryB = value; break;
+            case 3: c.secondaryR = value; break;
+            case 4: c.secondaryG = value; break;
+            case 5: c.secondaryB = value; break;
+            case 6: c.accentR = value; break;
+            case 7: c.accentG = value; break;
+            case 8: c.accentB = value; break;
+            case 9: c.glowR = value; break;
+            case 10: c.glowG = value; break;
+            case 11: c.glowB = value; break;
+            default: break;
+        }
+        c.preset = -1;
+        return;
+    }
+    if (ref.group == 7) {
+        DynamicColorSettings& c = settings_->colors;
+        if (ref.field == 0) c.intensity = value;
+        else if (ref.field == 1) c.flowSpeed = value;
+        else if (ref.field == 2) c.transitionMs = value;
         return;
     }
     EffectConfig* config = ConfigForGroup(ref.group);
@@ -969,6 +1031,22 @@ void ControlPanel::HandleMouseDown(POINT client, bool) {
         case HitKind::Reset:
             ResetVisuals();
             break;
+        case HitKind::ColorEnable:
+            ToggleDynamicColors();
+            break;
+        case HitKind::ColorPreset:
+            ApplyColorPreset(hitCopy.index);
+            break;
+        case HitKind::ColorBehavior:
+            if (hitCopy.index == 0) {
+                settings_->colors.spectrumGradient = !settings_->colors.spectrumGradient;
+            } else if (hitCopy.index == 1) {
+                settings_->colors.bassFlash = !settings_->colors.bassFlash;
+            } else if (hitCopy.index == 2) {
+                settings_->colors.timeFlow = !settings_->colors.timeFlow;
+            }
+            NotifyChanged(true);
+            break;
         default:
             break;
     }
@@ -1156,8 +1234,9 @@ void ControlPanel::SelectSystem() {
 }
 
 void ControlPanel::SelectTab(int index) {
-    if (index < 0 || index > 5) return;
+    if (index < 0 || index > 6) return;
     page_ = static_cast<Page>(index);
+    lastMainPage_ = page_;
     hover_ = Hit{};
     dirty_ = true;
 }
@@ -1183,6 +1262,32 @@ void ControlPanel::ToggleEffect(int index) {
 void ControlPanel::TogglePin() {
     if (!settings_) return;
     settings_->overlayFixed = !settings_->overlayFixed;
+    NotifyChanged(true);
+}
+
+void ControlPanel::ToggleDynamicColors() {
+    if (!settings_) return;
+    settings_->colors.enabled = !settings_->colors.enabled;
+    NotifyChanged(true);
+}
+
+void ControlPanel::ApplyColorPreset(int index) {
+    if (!settings_ || index < 0 || index >= 5) return;
+    const ColorPreset& preset = kColorPresets[index];
+    DynamicColorSettings& c = settings_->colors;
+    c.primaryR = preset.primaryR;
+    c.primaryG = preset.primaryG;
+    c.primaryB = preset.primaryB;
+    c.secondaryR = preset.secondaryR;
+    c.secondaryG = preset.secondaryG;
+    c.secondaryB = preset.secondaryB;
+    c.accentR = preset.accentR;
+    c.accentG = preset.accentG;
+    c.accentB = preset.accentB;
+    c.glowR = preset.glowR;
+    c.glowG = preset.glowG;
+    c.glowB = preset.glowB;
+    c.preset = index;
     NotifyChanged(true);
 }
 
@@ -1218,6 +1323,7 @@ void ControlPanel::ResetVisuals() {
     settings_->overlayScale = defaults.overlayScale;
     settings_->shards = defaults.shards;
     settings_->glow = defaults.glow;
+    settings_->colors = defaults.colors;
     NotifyChanged(true);
 }
 
@@ -1308,6 +1414,9 @@ LRESULT ControlPanel::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                         case HitKind::Recenter:
                         case HitKind::Reset:
                         case HitKind::Pin:
+                        case HitKind::ColorEnable:
+                        case HitKind::ColorPreset:
+                        case HitKind::ColorBehavior:
                             cursor = MAKEINTRESOURCEW(32649);
                             break;
                         case HitKind::ColorField:
