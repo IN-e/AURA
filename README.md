@@ -2,7 +2,7 @@
 
 一个原生 Windows 11 桌面音频可视化浮窗。单文件、无安装器、无需 .NET / VC++ 运行库，控制面板与声环浮窗均置顶。
 
-![AURA](preview.png)
+<img width="2195" height="1366" alt="image" src="https://github.com/user-attachments/assets/36e58427-0c9a-4f29-a838-640d1b44094e" />
 
 ## 运行
 
