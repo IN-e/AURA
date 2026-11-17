@@ -231,11 +231,18 @@ std::unordered_map<DWORD, ProcessRecord> EnumerateProcesses() {
     return result;
 }
 
+bool IsShellHost(const std::wstring& exe) {
+    return _wcsicmp(exe.c_str(), L"explorer.exe") == 0;
+}
+
 DWORD FindWindowAncestor(DWORD pid, const std::set<DWORD>& windowPids,
                          const std::unordered_map<DWORD, ProcessRecord>& processes) {
     for (int depth = 0; depth < 16 && pid > 4; ++depth) {
-        if (windowPids.count(pid)) return pid;
         auto it = processes.find(pid);
+        // explorer.exe is the shell parent of most apps. Climbing into it would
+        // attribute an app's audio session to a File Explorer window.
+        if (it != processes.end() && IsShellHost(it->second.exeName)) return 0;
+        if (windowPids.count(pid)) return pid;
         if (it == processes.end() || it->second.parent == pid) break;
         pid = it->second.parent;
     }
@@ -469,7 +476,7 @@ std::vector<AudioApp> AudioEngine::EnumerateApps() {
         std::wstring friendly;
         infoForPid(pid, &app.exe, &app.path, &friendly);
         if (app.exe.empty() && !app.path.empty()) app.exe = FileNamePart(app.path);
-        if (IsUninterestingHost(app.exe)) continue;
+        if (IsUninterestingHost(app.exe) || IsShellHost(app.exe)) continue;
         app.name = friendly;
         if (app.name.empty() || app.name == L"应用程序") {
             if (!app.exe.empty()) app.name = FileStem(app.exe);
@@ -481,8 +488,9 @@ std::vector<AudioApp> AudioEngine::EnumerateApps() {
 
     for (const auto& session : unmappedSessions) {
         if (session.pid <= 4 || included.count(session.pid)) continue;
-        if (IsUninterestingHost(processes.count(session.pid) ? processes.at(session.pid).exeName : L""))
-            continue;
+        std::wstring sessionExe =
+            processes.count(session.pid) ? processes.at(session.pid).exeName : L"";
+        if (IsUninterestingHost(sessionExe) || IsShellHost(sessionExe)) continue;
         AudioApp app;
         app.pid = session.pid;
         std::wstring friendly;

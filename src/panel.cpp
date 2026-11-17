@@ -407,6 +407,8 @@ void ControlPanel::Render() {
             RenderAppearancePage(theme);
         } else if (page_ == Page::Color) {
             RenderColorPage(theme);
+        } else if (page_ == Page::Ambient) {
+            RenderAmbientPage(theme);
         } else if (page_ == Page::Shards) {
             RenderShardsPage(theme);
             RenderFooter(theme, 3);
@@ -688,6 +690,20 @@ int ControlPanel::GetFieldValue(const FieldRef& ref) const {
         if (ref.field == 2) return c.transitionMs;
         return 0;
     }
+    if (ref.group == 8) {
+        const AmbientSettings& a = settings_->ambient;
+        switch (ref.field) {
+            case 0: return a.fluidAmplitude;
+            case 1: return a.fluidSpeed;
+            case 2: return a.wavelength;
+            case 3: return a.nebulaDensity;
+            case 4: return a.nebulaOpacity;
+            case 5: return a.glowGain;
+            case 6: return a.hueShift;
+            case 7: return a.easing;
+            default: return 0;
+        }
+    }
     const EffectConfig* config = ConfigForGroup(ref.group);
     if (!config) return 0;
     switch (ref.field) {
@@ -704,6 +720,11 @@ int ControlPanel::GetFieldValue(const FieldRef& ref) const {
 }
 
 int ControlPanel::MinValue(const FieldRef& ref) const {
+    if (ref.group == 8) {
+        if (ref.field == 2) return 2;
+        if (ref.field == 7) return 1;
+        return 0;
+    }
     if (ref.group == 6 || ref.group == 7) return 0;
     if (ref.field <= 2) return 0;
     if (ref.group == 3) {
@@ -730,6 +751,12 @@ int ControlPanel::MinValue(const FieldRef& ref) const {
 }
 
 int ControlPanel::MaxValue(const FieldRef& ref) const {
+    if (ref.group == 8) {
+        if (ref.field == 2) return 8;
+        if (ref.field == 6) return 120;
+        if (ref.field == 7) return 10;
+        return 200;
+    }
     if (ref.group == 6) return 255;
     if (ref.group == 7) {
         if (ref.field == 2) return 2000;
@@ -763,6 +790,10 @@ bool ControlPanel::IsPercentField(const FieldRef& ref) const {
     if (ref.group == 5) return ref.field >= 3;
     if (ref.group == 6) return false;
     if (ref.group == 7) return ref.field == 0 || ref.field == 1;
+    if (ref.group == 8) {
+        return ref.field == 0 || ref.field == 1 || ref.field == 3 || ref.field == 4 ||
+               ref.field == 5;
+    }
     return ref.field == 3 || ref.field == 4 || ref.field == 6 || ref.field == 7;
 }
 
@@ -821,6 +852,18 @@ void ControlPanel::SetFieldValue(const FieldRef& ref, int value) {
         if (ref.field == 0) c.intensity = value;
         else if (ref.field == 1) c.flowSpeed = value;
         else if (ref.field == 2) c.transitionMs = value;
+        return;
+    }
+    if (ref.group == 8) {
+        AmbientSettings& a = settings_->ambient;
+        if (ref.field == 0) a.fluidAmplitude = value;
+        else if (ref.field == 1) a.fluidSpeed = value;
+        else if (ref.field == 2) a.wavelength = value;
+        else if (ref.field == 3) a.nebulaDensity = value;
+        else if (ref.field == 4) a.nebulaOpacity = value;
+        else if (ref.field == 5) a.glowGain = value;
+        else if (ref.field == 6) a.hueShift = value;
+        else if (ref.field == 7) a.easing = value;
         return;
     }
     EffectConfig* config = ConfigForGroup(ref.group);
@@ -1047,6 +1090,21 @@ void ControlPanel::HandleMouseDown(POINT client, bool) {
             }
             NotifyChanged(true);
             break;
+        case HitKind::OuterMode:
+            settings_->outerRhythm = hitCopy.index == 1;
+            NotifyChanged(true);
+            break;
+        case HitKind::AmbientEnable:
+            settings_->ambient.enabled = !settings_->ambient.enabled;
+            NotifyChanged(true);
+            break;
+        case HitKind::AmbientFeature:
+            if (hitCopy.index == 0) settings_->ambient.fluid = !settings_->ambient.fluid;
+            else if (hitCopy.index == 1) settings_->ambient.nebula = !settings_->ambient.nebula;
+            else if (hitCopy.index == 2)
+                settings_->ambient.sustainedGlow = !settings_->ambient.sustainedGlow;
+            NotifyChanged(true);
+            break;
         default:
             break;
     }
@@ -1234,7 +1292,7 @@ void ControlPanel::SelectSystem() {
 }
 
 void ControlPanel::SelectTab(int index) {
-    if (index < 0 || index > 6) return;
+    if (index < 0 || index > 7) return;
     page_ = static_cast<Page>(index);
     lastMainPage_ = page_;
     hover_ = Hit{};
@@ -1321,9 +1379,11 @@ void ControlPanel::ResetVisuals() {
     settings_->bloomRange = defaults.bloomRange;
     settings_->bloomBrightness = defaults.bloomBrightness;
     settings_->overlayScale = defaults.overlayScale;
+    settings_->outerRhythm = defaults.outerRhythm;
     settings_->shards = defaults.shards;
     settings_->glow = defaults.glow;
     settings_->colors = defaults.colors;
+    settings_->ambient = defaults.ambient;
     NotifyChanged(true);
 }
 
@@ -1417,6 +1477,9 @@ LRESULT ControlPanel::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                         case HitKind::ColorEnable:
                         case HitKind::ColorPreset:
                         case HitKind::ColorBehavior:
+                        case HitKind::OuterMode:
+                        case HitKind::AmbientEnable:
+                        case HitKind::AmbientFeature:
                             cursor = MAKEINTRESOURCEW(32649);
                             break;
                         case HitKind::ColorField:

@@ -82,6 +82,21 @@ inline constexpr ColorPreset kColorPresets[5] = {
     {L"黑白", 230, 230, 230, 170, 170, 170, 255, 255, 255, 70, 70, 70},
 };
 
+struct AmbientSettings {
+    bool enabled = true;
+    bool fluid = true;
+    bool nebula = true;
+    bool sustainedGlow = true;
+    int fluidAmplitude = 100;   // 0..200 %
+    int fluidSpeed = 100;       // 0..200 %
+    int wavelength = 3;         // 2..8 lobes
+    int nebulaDensity = 100;    // 0..200 %
+    int nebulaOpacity = 100;    // 0..200 %
+    int glowGain = 100;         // 0..200 %
+    int hueShift = 30;          // 0..120 degrees
+    int easing = 2;             // 1..10 -> 0.01..0.10
+};
+
 struct VisualSettings {
     EffectConfig outer;
     EffectConfig dots;
@@ -89,6 +104,8 @@ struct VisualSettings {
     ShardConfig shards;
     GlowConfig glow;
     DynamicColorSettings colors;
+    AmbientSettings ambient;
+    bool outerRhythm = true;
 
     int panelR = 12;
     int panelG = 20;

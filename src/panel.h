@@ -48,9 +48,10 @@ private:
         Wave = 2,
         Shards = 3,
         Glow = 4,
-        Color = 5,
-        Appearance = 6,
-        Source = 7,
+        Ambient = 5,
+        Color = 6,
+        Appearance = 7,
+        Source = 8,
     };
 
     enum class HitKind {
@@ -77,10 +78,13 @@ private:
         ColorEnable,
         ColorPreset,
         ColorBehavior,
+        OuterMode,
+        AmbientEnable,
+        AmbientFeature,
     };
 
     struct FieldRef {
-        int group = 0;  // 0..2 effect, 3 panel, 4 shards, 5 center glow, 6 color roles, 7 color dynamics
+        int group = 0;  // 0..2 effect, 3 panel, 4 shards, 5 glow, 6 color roles, 7 dynamics, 8 ambient
         int field = 0;  // 0..2 color; 3..7 effect/global values
         bool operator==(const FieldRef& other) const {
             return group == other.group && field == other.field;
@@ -131,6 +135,7 @@ private:
     void RenderEffectPage(const Theme& theme, int effectIndex);
     void RenderShardsPage(const Theme& theme);
     void RenderGlowPage(const Theme& theme);
+    void RenderAmbientPage(const Theme& theme);
     void RenderColorPage(const Theme& theme);
     void RenderAppearancePage(const Theme& theme);
     void RenderFooter(const Theme& theme, int effectIndex);

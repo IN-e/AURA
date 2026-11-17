@@ -74,6 +74,7 @@ const wchar_t* kSourceSection = L"source";
 const wchar_t* kShardsSection = L"effect.shards";
 const wchar_t* kGlowSection = L"effect.glow";
 const wchar_t* kColorSection = L"color";
+const wchar_t* kAmbientSection = L"ambient";
 
 EffectConfig ReadEffect(const std::wstring& path, const wchar_t* section,
                         const EffectConfig& defaults, int index) {
@@ -225,6 +226,9 @@ SettingsStore::SettingsStore(std::wstring path) : path_(std::move(path)) {}
 VisualSettings SettingsStore::Load() const {
     VisualSettings settings = DefaultSettings();
     settings.outer = ReadEffect(path_, kOuterSection, settings.outer, 0);
+    settings.outerRhythm =
+        GetPrivateProfileIntW(kOuterSection, L"rhythm", settings.outerRhythm ? 1 : 0,
+                              path_.c_str()) != 0;
     settings.dots = ReadEffect(path_, kDotsSection, settings.dots, 1);
     settings.wave = ReadEffect(path_, kWaveSection, settings.wave, 2);
     settings.shards.enabled =
@@ -314,6 +318,44 @@ VisualSettings SettingsStore::Load() const {
                                                         colors.transitionMs, path_.c_str()),
                                    0, 2000);
 
+    AmbientSettings& ambient = settings.ambient;
+    ambient.enabled =
+        GetPrivateProfileIntW(kAmbientSection, L"enabled", ambient.enabled ? 1 : 0,
+                              path_.c_str()) != 0;
+    ambient.fluid =
+        GetPrivateProfileIntW(kAmbientSection, L"fluid", ambient.fluid ? 1 : 0,
+                              path_.c_str()) != 0;
+    ambient.nebula =
+        GetPrivateProfileIntW(kAmbientSection, L"nebula", ambient.nebula ? 1 : 0,
+                              path_.c_str()) != 0;
+    ambient.sustainedGlow =
+        GetPrivateProfileIntW(kAmbientSection, L"sustainedGlow",
+                              ambient.sustainedGlow ? 1 : 0, path_.c_str()) != 0;
+    ambient.fluidAmplitude =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"fluidAmplitude",
+                                      ambient.fluidAmplitude, path_.c_str()), 0, 200);
+    ambient.fluidSpeed =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"fluidSpeed", ambient.fluidSpeed,
+                                      path_.c_str()), 0, 200);
+    ambient.wavelength =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"wavelength", ambient.wavelength,
+                                      path_.c_str()), 2, 8);
+    ambient.nebulaDensity =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"nebulaDensity",
+                                      ambient.nebulaDensity, path_.c_str()), 0, 200);
+    ambient.nebulaOpacity =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"nebulaOpacity",
+                                      ambient.nebulaOpacity, path_.c_str()), 0, 200);
+    ambient.glowGain =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"glowGain", ambient.glowGain,
+                                      path_.c_str()), 0, 200);
+    ambient.hueShift =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"hueShift", ambient.hueShift,
+                                      path_.c_str()), 0, 120);
+    ambient.easing =
+        ClampInt(GetPrivateProfileIntW(kAmbientSection, L"easing", ambient.easing,
+                                      path_.c_str()), 1, 10);
+
     settings.panelR = ClampInt(GetPrivateProfileIntW(kPanelSection, L"r", settings.panelR,
                                                     path_.c_str()), 0, 255);
     settings.panelG = ClampInt(GetPrivateProfileIntW(kPanelSection, L"g", settings.panelG,
@@ -359,6 +401,9 @@ VisualSettings SettingsStore::Load() const {
 
 void SettingsStore::Save(const VisualSettings& settings) const {
     WriteEffect(path_, kOuterSection, settings.outer);
+    WritePrivateProfileStringW(kOuterSection, L"rhythm",
+                               std::to_wstring(settings.outerRhythm ? 1 : 0).c_str(),
+                               path_.c_str());
     WriteEffect(path_, kDotsSection, settings.dots);
     WriteEffect(path_, kWaveSection, settings.wave);
 
@@ -411,6 +456,23 @@ void SettingsStore::Save(const VisualSettings& settings) const {
     writeColor(L"intensity", colors.intensity);
     writeColor(L"flowSpeed", colors.flowSpeed);
     writeColor(L"transitionMs", colors.transitionMs);
+
+    auto writeAmbient = [&](const wchar_t* key, int number) {
+        WritePrivateProfileStringW(kAmbientSection, key, std::to_wstring(number).c_str(),
+                                   path_.c_str());
+    };
+    writeAmbient(L"enabled", settings.ambient.enabled ? 1 : 0);
+    writeAmbient(L"fluid", settings.ambient.fluid ? 1 : 0);
+    writeAmbient(L"nebula", settings.ambient.nebula ? 1 : 0);
+    writeAmbient(L"sustainedGlow", settings.ambient.sustainedGlow ? 1 : 0);
+    writeAmbient(L"fluidAmplitude", settings.ambient.fluidAmplitude);
+    writeAmbient(L"fluidSpeed", settings.ambient.fluidSpeed);
+    writeAmbient(L"wavelength", settings.ambient.wavelength);
+    writeAmbient(L"nebulaDensity", settings.ambient.nebulaDensity);
+    writeAmbient(L"nebulaOpacity", settings.ambient.nebulaOpacity);
+    writeAmbient(L"glowGain", settings.ambient.glowGain);
+    writeAmbient(L"hueShift", settings.ambient.hueShift);
+    writeAmbient(L"easing", settings.ambient.easing);
 
     auto writePanel = [&](const wchar_t* key, int number) {
         WritePrivateProfileStringW(kPanelSection, key, std::to_wstring(number).c_str(),

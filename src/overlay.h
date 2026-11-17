@@ -100,6 +100,11 @@ private:
                              bool closed = true) const;
     VisualPath BuildMeshPath(const std::vector<D2D1_POINT_2F>& outer,
                              const std::vector<D2D1_POINT_2F>& inner) const;
+    VisualPath BuildWebMeshPath(const std::vector<D2D1_POINT_2F>& inner,
+                                const std::vector<D2D1_POINT_2F>& outer) const;
+    std::vector<VisualPath> BuildWebMeshLayers(const std::vector<D2D1_POINT_2F>& inner,
+                                               const std::vector<D2D1_POINT_2F>& outer,
+                                               int layerCount) const;
     void DrawGlowGeometry(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush,
                           ID2D1PathGeometry* geometry, const gfx::Color& color, float opacity,
                           float coreWidth);
@@ -125,6 +130,14 @@ private:
         float rotation = 0.0f;
         float spin = 0.0f;
         int shape = 0;
+    };
+
+    struct AmbientParticle {
+        float angle = 0.0f;
+        float radius = 0.0f;
+        float size = 0.0f;
+        float phase = 0.0f;
+        float alpha = 0.0f;
     };
 
     HWND hwnd_ = nullptr;
@@ -183,6 +196,23 @@ private:
     DynamicPalette dynamicCurrent_{};
     DynamicPalette dynamicLastTarget_{};
     DynamicPalette dynamicRender_{};
+    std::vector<float> rhythmEnvelope_;
+    std::vector<float> rhythmSlowEnvelope_;
+    std::vector<float> rhythmFastEnvelope_;
+    float bassSlowEnvelope_ = 0.0f;
+    float bassFastEnvelope_ = 0.0f;
+    bool rhythmBassOnsetInitialized_ = false;
+    std::vector<float> ambientSlowEnvelope_;
+    std::vector<AmbientParticle> ambientParticles_;
+    gfx::Color ambientNebulaColor_{};
+    bool ambientNebulaColorInitialized_ = false;
+    float ambientEnergy_ = 0.0f;
+    float waveEnvelope_ = 0.0f;
+    float ambientRotation_ = 0.0f;
+    float ambientRotationSpeed_ = 0.0f;
+    float lastAmbientTime_ = -1.0f;
+    bool ambientParticlesReady_ = false;
+    float visualPulse_ = 1.0f;
     bool dynamicInitialized_ = false;
     float dynamicProgress_ = 1.0f;
     gfx::Color lastGlowCacheColor_{};

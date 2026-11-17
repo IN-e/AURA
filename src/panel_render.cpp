@@ -226,14 +226,15 @@ void ControlPanel::RenderTabs(const Theme& theme) {
     FillRound(renderTarget_.Get(), brush_.Get(), theme.surface, tray, 13);
     StrokeRound(renderTarget_.Get(), brush_.Get(), theme.border, tray, 13, 1.0f);
     const wchar_t* labels[] = {L"声环", L"点阵", L"横波", L"碎片",
-                               L"底光", L"色彩", L"外观"};
+                               L"底光", L"氛围", L"色彩", L"外观"};
     int active = CurrentEffect();
     if (page_ == Page::Shards) active = 3;
     else if (page_ == Page::Glow) active = 4;
-    else if (page_ == Page::Color) active = 5;
-    else if (page_ == Page::Appearance) active = 6;
-    const float tabWidth = (kContentWidth - 6.0f) / 7.0f;
-    for (int i = 0; i < 7; ++i) {
+    else if (page_ == Page::Ambient) active = 5;
+    else if (page_ == Page::Color) active = 6;
+    else if (page_ == Page::Appearance) active = 7;
+    const float tabWidth = (kContentWidth - 6.0f) / 8.0f;
+    for (int i = 0; i < 8; ++i) {
         D2D1_RECT_F tab = R(kMargin + 3.0f + i * tabWidth, 269, tabWidth, 36);
         bool hovered = IsHovered(HitKind::Tab, i, -1);
         if (i == active) {
@@ -241,7 +242,7 @@ void ControlPanel::RenderTabs(const Theme& theme) {
         } else if (hovered) {
             FillRound(renderTarget_.Get(), brush_.Get(), theme.surfaceHover, tab, 10);
         }
-        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), labels[i], 9.8f,
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), labels[i], 9.4f,
              i == active ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
              i == active ? theme.accentText : theme.muted, tab,
              DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -391,6 +392,27 @@ void ControlPanel::RenderEffectPage(const Theme& theme, int effectIndex) {
     DrawSliderRow(theme, effectIndex, 5, L"波形密度", 548);
     DrawSliderRow(theme, effectIndex, 7, L"线宽", 602);
     DrawSliderRow(theme, effectIndex, 6, L"透明度", 656);
+
+    if (effectIndex == 0) {
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"响应模式", 9.6f,
+             DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 710, 160, 18));
+        const wchar_t* modes[] = {L"平滑", L"节奏"};
+        for (int i = 0; i < 2; ++i) {
+            D2D1_RECT_F chip = R(326.0f + i * 104.0f, 704.0f, 100.0f, 30.0f);
+            bool selected = settings_->outerRhythm == (i == 1);
+            bool hovered = IsHovered(HitKind::OuterMode, i, -1);
+            FillRound(renderTarget_.Get(), brush_.Get(),
+                      selected ? theme.accentSoft
+                               : hovered ? theme.surfaceHover : theme.surface,
+                      chip, 9);
+            StrokeRound(renderTarget_.Get(), brush_.Get(),
+                        selected ? theme.accent.WithAlpha(180) : theme.border, chip, 9, 1.0f);
+            Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), modes[i], 9.4f,
+                 DWRITE_FONT_WEIGHT_SEMI_BOLD, selected ? theme.text : theme.muted, chip,
+                 DWRITE_TEXT_ALIGNMENT_CENTER);
+            AddHit(HitKind::OuterMode, i, -1, chip);
+        }
+    }
 }
 
 void ControlPanel::RenderShardsPage(const Theme& theme) {
@@ -506,8 +528,56 @@ void ControlPanel::DrawColorRoleRow(const Theme& theme, int baseField, const wch
     DrawColorField(theme, 6, baseField + 2, R(474, y, 58, 36));
 }
 
+void ControlPanel::RenderAmbientPage(const Theme& theme) {
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"06   /   AMBIENT LAYER", 8.4f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 321, 320, 14));
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"氛围", 20.0f,
+         DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, 336, 300, 30));
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
+         L"用 slowEnv 驱动柔和流体、星云与持续光晕", 9.2f, DWRITE_FONT_WEIGHT_NORMAL,
+         theme.muted, R(30, 365, 430, 16));
+
+    AddHit(HitKind::AmbientEnable, -1, -1, R(452, 329, 82, 44));
+    DrawToggle(theme, R(462, 338, 46, 26), settings_->ambient.enabled,
+               IsHovered(HitKind::AmbientEnable, -1, -1));
+
+    const wchar_t* features[] = {L"内圈流体", L"中心星云", L"持续光晕"};
+    const bool featureValues[] = {settings_->ambient.fluid, settings_->ambient.nebula,
+                                  settings_->ambient.sustainedGlow};
+    const float featureW = (kContentWidth - 2 * 8.0f) / 3.0f;
+    for (int i = 0; i < 3; ++i) {
+        D2D1_RECT_F chip = R(kMargin + i * (featureW + 8.0f), 390, featureW, 34);
+        bool hovered = IsHovered(HitKind::AmbientFeature, i, -1);
+        bool on = featureValues[i];
+        FillRound(renderTarget_.Get(), brush_.Get(),
+                  on ? theme.accentSoft : hovered ? theme.surfaceHover : theme.surface, chip,
+                  10);
+        StrokeRound(renderTarget_.Get(), brush_.Get(),
+                    on ? theme.accent.WithAlpha(170) : theme.border, chip, 10, 1.0f);
+        FillCircle(renderTarget_.Get(), brush_.Get(), on ? theme.accent : theme.faint,
+                   chip.left + 16, (chip.top + chip.bottom) * 0.5f, 3.2f);
+        Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), features[i], 9.2f,
+             DWRITE_FONT_WEIGHT_NORMAL, on ? theme.text : theme.muted,
+             R(chip.left + 25, chip.top, chip.right - chip.left - 30, 34));
+        AddHit(HitKind::AmbientFeature, i, -1, chip);
+    }
+
+    DrawSliderRow(theme, 8, 0, L"流体幅度", 440);
+    DrawSliderRow(theme, 8, 1, L"流动速度", 486);
+    DrawSliderRow(theme, 8, 2, L"流体波长", 532);
+    DrawSliderRow(theme, 8, 3, L"星云密度", 578);
+    DrawSliderRow(theme, 8, 4, L"星云透明度", 624);
+    DrawSliderRow(theme, 8, 5, L"光晕增益", 670);
+    DrawSliderRow(theme, 8, 6, L"色相偏移", 716);
+    DrawSliderRow(theme, 8, 7, L"氛围缓动", 762);
+
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
+         L"氛围缓动值 ×0.01；默认 2 即 0.02 插值系数", 8.0f,
+         DWRITE_FONT_WEIGHT_NORMAL, theme.faint, R(30, 812, 500, 14));
+}
+
 void ControlPanel::RenderColorPage(const Theme& theme) {
-    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"06   /   DYNAMIC COLOR", 8.4f,
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"07   /   DYNAMIC COLOR", 8.4f,
          DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 321, 300, 14));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"色彩", 20.0f,
          DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, 336, 300, 30));
@@ -589,7 +659,7 @@ void ControlPanel::RenderColorPage(const Theme& theme) {
 }
 
 void ControlPanel::RenderAppearancePage(const Theme& theme) {
-    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"07   /   APPEARANCE", 8.4f,
+    Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"08   /   APPEARANCE", 8.4f,
          DWRITE_FONT_WEIGHT_NORMAL, theme.muted, R(30, 321, 300, 14));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(), L"外观", 20.0f,
          DWRITE_FONT_WEIGHT_SEMI_BOLD, theme.text, R(30, 336, 300, 30));
@@ -668,7 +738,7 @@ void ControlPanel::RenderAppearancePage(const Theme& theme) {
          L"预设自动保存于程序目录  ·  presets.ini", 8.1f,
          DWRITE_FONT_WEIGHT_NORMAL, theme.faint, R(30, 806, 500, 16));
     Text(renderTarget_.Get(), writeFactory_.Get(), brush_.Get(),
-         L"AURA 1.6.0   ·   Windows 11", 8.0f, DWRITE_FONT_WEIGHT_NORMAL, theme.faint,
+         L"AURA 1.11   ·   Windows 11", 8.0f, DWRITE_FONT_WEIGHT_NORMAL, theme.faint,
          R(30, 828, 500, 16));
 }
 

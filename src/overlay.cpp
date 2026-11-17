@@ -198,6 +198,10 @@ bool Overlay::Create(HINSTANCE instance, VisualSettings* settings, AudioEngine* 
         return false;
     }
     graphicsReady_ = true;
+    // Apply the real extended style before the first show. Previously a
+    // startup-locked overlay could keep the non-transparent style until the
+    // user toggled the pin because interactive_ already matched the setting.
+    SetInteractive(!settings_->overlayFixed);
     RenderOnce();
     RefreshVisibility();
     return true;
@@ -745,6 +749,12 @@ void Overlay::Resize(UINT width, UINT height) {
 void Overlay::OnSettingsChanged() {
     bool wantedInteractive = !settings_->overlayFixed;
     if (interactive_ != wantedInteractive) SetInteractive(wantedInteractive);
+    if (!settings_->outerRhythm) {
+        rhythmEnvelope_.clear();
+        rhythmSlowEnvelope_.clear();
+        rhythmFastEnvelope_.clear();
+        rhythmBassOnsetInitialized_ = false;
+    }
     if (!settings_->shards.enabled || settings_->shards.opacity <= 0) {
         shards_.clear();
         shardAccumulator_ = 0.0f;
@@ -757,6 +767,15 @@ void Overlay::OnSettingsChanged() {
 
 void Overlay::ReassertTopmost() {
     if (!hwnd_ || !visible_) return;
+    // The layered extended style can be lost across shell/compositor changes.
+    // Keep WS_EX_TRANSPARENT in sync with the pinned state, not just with the
+    // cached interactive_ flag.
+    LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
+    bool wantInteractive = !settings_->overlayFixed;
+    bool styleInteractive = (style & WS_EX_TRANSPARENT) == 0;
+    if (interactive_ != wantInteractive || styleInteractive != wantInteractive) {
+        SetInteractive(wantInteractive);
+    }
     if (!IsWindowVisible(hwnd_)) ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
@@ -1001,12 +1020,12 @@ void Overlay::RenderFrame(float dt) {
         // Shards deliberately bypass Bloom: they are crisp, semi-transparent
         // geometric facets, not soft light blobs.
         DrawShards(d2dContext_.Get(), brush_.Get(), static_cast<float>(width_) * 0.5f,
-                   static_cast<float>(height_) * 0.5f, scale);
+                   static_cast<float>(height_) * 0.5f, scale * visualPulse_);
     } else {
         DrawVisuals(d2dContext_.Get(), brush_.Get(), static_cast<float>(width_),
                     static_cast<float>(height_), scale, elapsed_);
         DrawShards(d2dContext_.Get(), brush_.Get(), static_cast<float>(width_) * 0.5f,
-                   static_cast<float>(height_) * 0.5f, scale);
+                   static_cast<float>(height_) * 0.5f, scale * visualPulse_);
     }
     HRESULT hr = d2dContext_->EndDraw();
     d2dContext_->SetTarget(nullptr);
@@ -1063,6 +1082,91 @@ Overlay::VisualPath Overlay::BuildMeshPath(const std::vector<D2D1_POINT_2F>& out
     if (FAILED(sink->Close())) return result;
     result.valid = true;
     return result;
+}
+
+Overlay::VisualPath Overlay::BuildWebMeshPath(
+    const std::vector<D2D1_POINT_2F>& inner,
+    const std::vector<D2D1_POINT_2F>& outer) const {
+    VisualPath result;
+    if (!d2dFactory_ || inner.empty() || inner.size() != outer.size()) return result;
+    if (FAILED(d2dFactory_->CreatePathGeometry(&result.geometry)) || !result.geometry)
+        return result;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(result.geometry->Open(&sink)) || !sink) return result;
+    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+    const size_t count = inner.size();
+    for (size_t i = 0; i < count; ++i) {
+        // Each inner baseline point fans out to the outer point at the same
+        // angle and to both neighbors. Stretched outer points therefore form
+        // long, taut triangular filaments instead of a simple outline.
+        sink->BeginFigure(inner[i], D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(outer[i]);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+
+        sink->BeginFigure(inner[i], D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(outer[(i + 1) % count]);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+
+        sink->BeginFigure(inner[i], D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(outer[(i + count - 1) % count]);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    }
+    if (FAILED(sink->Close())) return result;
+    result.valid = true;
+    return result;
+}
+
+std::vector<Overlay::VisualPath> Overlay::BuildWebMeshLayers(
+    const std::vector<D2D1_POINT_2F>& inner,
+    const std::vector<D2D1_POINT_2F>& outer, int layerCount) const {
+    std::vector<VisualPath> layers;
+    if (!d2dFactory_ || inner.empty() || inner.size() != outer.size() || layerCount <= 0)
+        return layers;
+
+    float maxGap = 0.001f;
+    for (size_t i = 0; i < inner.size(); ++i) {
+        float dx = outer[i].x - inner[i].x;
+        float dy = outer[i].y - inner[i].y;
+        maxGap = std::max(maxGap, std::sqrt(dx * dx + dy * dy));
+    }
+
+    layers.resize(layerCount);
+    std::vector<ComPtr<ID2D1GeometrySink>> sinks(layerCount);
+    for (int layer = 0; layer < layerCount; ++layer) {
+        if (FAILED(d2dFactory_->CreatePathGeometry(&layers[layer].geometry)) ||
+            !layers[layer].geometry ||
+            FAILED(layers[layer].geometry->Open(&sinks[layer])) || !sinks[layer]) {
+            return {};
+        }
+        sinks[layer]->SetFillMode(D2D1_FILL_MODE_WINDING);
+    }
+
+    const size_t count = inner.size();
+    for (size_t i = 0; i < count; ++i) {
+        float dx = outer[i].x - inner[i].x;
+        float dy = outer[i].y - inner[i].y;
+        float gap = std::sqrt(dx * dx + dy * dy) / maxGap;
+        int layer = std::clamp(static_cast<int>(gap * layerCount), 0, layerCount - 1);
+        ID2D1GeometrySink* sink = sinks[layer].Get();
+
+        sink->BeginFigure(inner[i], D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(outer[i]);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+
+        sink->BeginFigure(inner[i], D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(outer[(i + 1) % count]);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+
+        sink->BeginFigure(inner[i], D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(outer[(i + count - 1) % count]);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    }
+
+    for (int layer = 0; layer < layerCount; ++layer) {
+        if (FAILED(sinks[layer]->Close())) return {};
+        layers[layer].valid = true;
+    }
+    return layers;
 }
 
 void Overlay::DrawGlowGeometry(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush,
@@ -1229,9 +1333,76 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const float cx = width * 0.5f;
     const float cy = height * 0.5f;
-    const float maxRadius = std::min(cx, cy) - 8.0f * scale;
     const float level = analyzer_.Level();
     const float beat = analyzer_.Beat();
+    const bool rhythmMode = settings_->outerRhythm;
+    float bassBase = analyzer_.BassLevel();
+    if (bassBase * 255.0f < 30.0f) bassBase = 0.0f;
+    float bassPulse = 0.0f;
+    if (rhythmMode) {
+        if (!rhythmBassOnsetInitialized_) {
+            bassSlowEnvelope_ = bassBase;
+            bassFastEnvelope_ = bassBase;
+            rhythmBassOnsetInitialized_ = true;
+        }
+        bassSlowEnvelope_ += (bassBase - bassSlowEnvelope_) * 0.01f;
+        bassFastEnvelope_ += (bassBase - bassFastEnvelope_) * 0.50f;
+        float bassTransient = std::max(0.0f, bassFastEnvelope_ - bassSlowEnvelope_);
+        if (bassBase < 0.1f || bassTransient < 0.02f) bassTransient = 0.0f;
+        bassPulse = std::clamp(bassTransient * 2.5f, 0.0f, 1.0f);
+    }
+    const float rhythmScale = 1.0f + 0.10f * bassPulse;
+    scale *= rhythmScale;
+    visualPulse_ = rhythmScale;
+    const float maxRadius = std::min(cx, cy) - 8.0f * scale;
+
+    const AmbientSettings& ambient = settings_->ambient;
+    const float ambientEase = std::clamp(ambient.easing, 1, 10) / 100.0f;
+    auto ambientAt = [&](float p) {
+        if (!ambient.enabled || ambientSlowEnvelope_.empty()) return 0.0f;
+        int count = static_cast<int>(ambientSlowEnvelope_.size());
+        float position = std::clamp(p, 0.0f, 1.0f) * count;
+        int low = static_cast<int>(std::floor(position)) % count;
+        int high = (low + 1) % count;
+        float fraction = position - std::floor(position);
+        float value = ambientSlowEnvelope_[low] +
+                      (ambientSlowEnvelope_[high] - ambientSlowEnvelope_[low]) * fraction;
+        return std::pow(std::clamp(value, 0.0f, 1.0f), 0.70f);
+    };
+    if (ambient.enabled) {
+        constexpr int kAmbientBins = 96;
+        bool warmup = ambientSlowEnvelope_.size() != kAmbientBins;
+        if (warmup) ambientSlowEnvelope_.assign(kAmbientBins, 0.0f);
+        float sum = 0.0f;
+        for (int i = 0; i < kAmbientBins; ++i) {
+            float p = static_cast<float>(i) / kAmbientBins;
+            float current = std::clamp(analyzer_.BandCyclic(p), 0.0f, 1.0f);
+            if (current * 255.0f < 30.0f) current = 0.0f;
+            float& slow = ambientSlowEnvelope_[i];
+            slow = warmup ? current : slow + (current - slow) * ambientEase;
+            sum += slow;
+        }
+        ambientEnergy_ =
+            std::pow(std::clamp(sum / kAmbientBins, 0.0f, 1.0f), 0.70f);
+
+        float dt = lastAmbientTime_ < 0.0f ? 0.0f : std::clamp(time - lastAmbientTime_, 0.0f, 0.1f);
+        lastAmbientTime_ = time;
+        float targetSpeed = (0.012f + 0.040f * ambientEnergy_) *
+                            (std::clamp(ambient.fluidSpeed, 0, 200) / 100.0f);
+        ambientRotationSpeed_ += (targetSpeed - ambientRotationSpeed_) * ambientEase;
+        ambientRotation_ += ambientRotationSpeed_ * dt;
+    } else {
+        ambientEnergy_ = 0.0f;
+        lastAmbientTime_ = time;
+    }
+    const float ambientGlow =
+        (ambient.enabled && ambient.sustainedGlow)
+            ? ambientEnergy_ * (std::clamp(ambient.glowGain, 0, 200) / 100.0f)
+            : 0.0f;
+    const float ambientHue =
+        (ambient.enabled && ambient.sustainedGlow)
+            ? ambientEnergy_ * static_cast<float>(std::clamp(ambient.hueShift, 0, 120))
+            : 0.0f;
 
     const EffectConfig& outerCfg = settings_->outer;
     const EffectConfig& dotsCfg = settings_->dots;
@@ -1239,10 +1410,94 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     const bool dynamicColors = settings_->colors.enabled;
     const gfx::Color outerColor =
         dynamicColors ? dynamicRender_.primary : gfx::Rgb(outerCfg.r, outerCfg.g, outerCfg.b);
+    float outerGlowBoost = rhythmMode ? 1.0f + 0.85f * bassPulse : 1.0f;
+    outerGlowBoost += ambientGlow * 0.85f;
+    const gfx::Color outerGlowColor =
+        ShiftColor(outerColor, -ambientHue, 1.0f + ambientGlow * 0.35f, 0.0f, 1.0f);
     const gfx::Color dotsColor =
         dynamicColors ? dynamicRender_.secondary : gfx::Rgb(dotsCfg.r, dotsCfg.g, dotsCfg.b);
     const gfx::Color waveColor =
         dynamicColors ? dynamicRender_.accent : gfx::Rgb(waveCfg.r, waveCfg.g, waveCfg.b);
+
+    if (ambient.enabled && ambient.nebula && ambientEnergy_ > 0.004f) {
+        if (!ambientParticlesReady_) {
+            ambientParticles_.resize(96);
+            uint32_t state = 0x9e3779b9u;
+            auto next = [&]() {
+                state = state * 1664525u + 1013904223u;
+                return static_cast<float>((state >> 8) & 0x00FFFFFFu) / 16777215.0f;
+            };
+            for (auto& particle : ambientParticles_) {
+                particle.angle = next() * 6.2831853f;
+                particle.radius = 0.18f + 0.72f * std::sqrt(next());
+                particle.size = 0.55f + 2.4f * next();
+                particle.phase = next() * 6.2831853f;
+                particle.alpha = 0.25f + 0.75f * next();
+            }
+            ambientParticlesReady_ = true;
+        }
+
+        gfx::Color targetColor =
+            dynamicColors ? dynamicRender_.glow
+                          : gfx::Rgb(settings_->glow.r, settings_->glow.g, settings_->glow.b);
+        if (dynamicColors) targetColor = LerpColor(targetColor, dynamicRender_.accent, 0.38f);
+        targetColor = ShiftColor(targetColor, -ambientHue * 0.7f,
+                                 1.18f + ambientGlow * 0.25f, 0.0f, 1.0f);
+
+        // Nebula color changes are eased separately from the dynamic palette,
+        // so preset changes and slow hue drift never hard-cut the background.
+        if (!ambientNebulaColorInitialized_) {
+            ambientNebulaColor_ = targetColor;
+            ambientNebulaColorInitialized_ = true;
+        } else {
+            HslColor from = ToHsl(ambientNebulaColor_);
+            HslColor to = ToHsl(targetColor);
+            float hueDelta = to.h - from.h;
+            if (hueDelta > 180.0f) hueDelta -= 360.0f;
+            else if (hueDelta < -180.0f) hueDelta += 360.0f;
+            from.h += hueDelta * ambientEase;
+            from.s += (to.s - from.s) * ambientEase;
+            from.l += (to.l - from.l) * ambientEase;
+            ambientNebulaColor_ = FromHsl(from, 255);
+        }
+        gfx::Color base = ambientNebulaColor_;
+        const float nebulaAlpha =
+            ambientEnergy_ * 0.5f * (std::clamp(ambient.nebulaOpacity, 0, 200) / 100.0f);
+        const int count = std::clamp(
+            static_cast<int>(std::lround(96.0f * ambient.nebulaDensity / 100.0f)), 0, 96);
+
+        // A few large, almost transparent clouds sit behind the particle field.
+        for (int cloud = 0; cloud < 3; ++cloud) {
+            float angle = ambientRotation_ * 0.55f + cloud * 2.0943951f;
+            float distance = maxRadius * (0.18f + 0.05f * cloud);
+            float x = cx + std::cos(angle) * distance;
+            float y = cy + std::sin(angle) * distance;
+            float radius = maxRadius * (0.30f + 0.05f * cloud);
+            gfx::Color color = base;
+            color.a = static_cast<int>(std::lround(
+                std::clamp(nebulaAlpha * 0.11f, 0.0f, 1.0f) * 255.0f));
+            if (color.a <= 0) continue;
+            brush->SetColor(color.D2D());
+            target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius), brush);
+        }
+
+        for (int i = 0; i < count; ++i) {
+            const AmbientParticle& particle = ambientParticles_[i];
+            float angle = particle.angle + ambientRotation_ * 0.65f;
+            float breathe = 1.0f + 0.055f * std::sin(time * 0.20f + particle.phase);
+            float distance = maxRadius * particle.radius * breathe;
+            float x = cx + std::cos(angle) * distance;
+            float y = cy + std::sin(angle) * distance;
+            float radius = (0.90f + 2.5f * ambientEnergy_) * particle.size * scale;
+            gfx::Color color = base;
+            color.a = static_cast<int>(std::lround(
+                std::clamp(nebulaAlpha * (0.35f + 0.65f * particle.alpha), 0.0f, 1.0f) *
+                255.0f));
+            if (color.a <= 0 || radius <= 0.2f) continue;
+            brush->SetColor(color.D2D());
+            target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius), brush);
+        }
+    }
 
     const float tau = 6.2831853f;
     auto wrap = [](float value) {
@@ -1252,6 +1507,26 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     auto spectrumOuter = [&](float p) {
         return analyzer_.BandCyclic(p + 0.035f) * 0.67f +
                analyzer_.BandCyclic(wrap(p * 1.017f + 0.41f)) * 0.33f;
+    };
+    auto rhythmSpectrum = [&](float p) {
+        // Nonlinear angle -> log-band map: low bands occupy a much narrower
+        // slice of the ring, leaving most of the circumference to mids/highs.
+        float mapped = std::pow(std::clamp(p, 0.0f, 1.0f), 0.55f);
+        auto gatedBand = [&](float position) {
+            float value = std::clamp(analyzer_.BandAt(position), 0.0f, 1.0f);
+            if (value * 255.0f < 30.0f) return 0.0f;
+            return value;
+        };
+        float value = gatedBand(mapped) * 0.82f +
+                      gatedBand(std::min(1.0f, mapped + 0.015f)) * 0.18f;
+        // Tilt the low end down instead of letting it hold a permanent wide
+        // bump. Mids and highs keep their full level.
+        value *= 0.55f + 0.45f * std::clamp(mapped / 0.12f, 0.0f, 1.0f);
+        // Compression: lift quiet detail, then a soft knee prevents any one
+        // band from becoming a single dominant pillar.
+        value = std::pow(std::clamp(value, 0.0f, 1.0f), 0.8f);
+        if (value > 0.58f) value = 0.58f + (value - 0.58f) * 0.45f;
+        return value;
     };
     auto gapSignal = [&](float p) {
         return std::clamp(analyzer_.BandCyclic(wrap(p + 0.68f)), 0.0f, 1.0f);
@@ -1265,15 +1540,53 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     const float baseOuterR = (62.0f + 1.38f * outerCfg.size) * scale;
     const float outerAmp = (5.0f + 0.22f * outerCfg.amplitude) * scale;
     const float innerAmp = outerAmp * 0.78f;
+    const float rhythmMaxOffset = outerAmp * 1.6f;
     const float thickness = outerCfg.thickness / 100.0f;
     const float minSeparation = std::max(2.5f, 4.0f * scale);
 
     std::vector<float> rawOuterValues(densityOuter, 0.0f);
     float outerMean = 0.0f;
-    for (int i = 0; i < densityOuter; ++i) {
-        float p = static_cast<float>(i) / densityOuter;
-        rawOuterValues[i] = rawOuter(p);
-        outerMean += rawOuterValues[i];
+    if (rhythmMode) {
+        bool warmup = rhythmEnvelope_.size() != static_cast<size_t>(densityOuter);
+        if (warmup) {
+            rhythmEnvelope_.assign(densityOuter, 0.0f);
+            rhythmSlowEnvelope_.assign(densityOuter, 0.0f);
+            rhythmFastEnvelope_.assign(densityOuter, 0.0f);
+        }
+        for (int i = 0; i < densityOuter; ++i) {
+            float p = static_cast<float>(i) / densityOuter;
+            float current = rhythmSpectrum(p);
+            if (current < 0.1f) current = 0.0f;
+            if (warmup) {
+                rhythmSlowEnvelope_[i] = current;
+                rhythmFastEnvelope_[i] = current;
+            }
+            float& slow = rhythmSlowEnvelope_[i];
+            float& fast = rhythmFastEnvelope_[i];
+            slow += (current - slow) * 0.01f;
+            fast += (current - fast) * 0.50f;
+
+            // Only the rising difference between the fast and slow envelopes
+            // may drive the outer ring. Sustained pads therefore stay at the
+            // baseline; drum/piano attacks produce the visible bloom.
+            float transient = std::max(0.0f, fast - slow);
+            if (current < 0.12f || transient < 0.02f) transient = 0.0f;
+            float onset = std::clamp(transient * 2.5f, 0.0f, 1.0f);
+            float targetValue = std::pow(onset, 1.5f);
+
+            float& envelope = rhythmEnvelope_[i];
+            float coefficient = targetValue > envelope ? 0.80f : 0.10f;
+            envelope += (targetValue - envelope) * coefficient;
+            if (targetValue == 0.0f && envelope < 0.004f) envelope = 0.0f;
+            rawOuterValues[i] = envelope;
+            outerMean += rawOuterValues[i];
+        }
+    } else {
+        for (int i = 0; i < densityOuter; ++i) {
+            float p = static_cast<float>(i) / densityOuter;
+            rawOuterValues[i] = rawOuter(p);
+            outerMean += rawOuterValues[i];
+        }
     }
     outerMean /= densityOuter;
 
@@ -1281,13 +1594,45 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     // its exact negative: an outer peak becomes an inward dent on the inner
     // ring and dot ring.
     auto shapeOuter = [&](float value) {
-        return std::clamp((value - outerMean) * 2.4f, -kMaxRingDeform, kMaxRingDeform);
+        float shape = (value - outerMean) * 2.4f;
+        if (rhythmMode && shape > 0.0f) {
+            // Outward excursions get an asymmetric soft ceiling, so a
+            // persistent hot band cannot form a permanent single tower.
+            shape = 0.75f * std::tanh(shape / 0.75f);
+        }
+        return std::clamp(shape, -kMaxRingDeform, kMaxRingDeform);
     };
-    auto outerShapeAt = [&](float p) { return shapeOuter(rawOuter(p)); };
+    auto rhythmEnvelopeAt = [&](float p) {
+        if (!rhythmMode || rhythmEnvelope_.empty()) return 0.0f;
+        float position = p * densityOuter;
+        int low = static_cast<int>(std::floor(position));
+        int high = (low + 1) % densityOuter;
+        float fraction = position - std::floor(position);
+        low = ((low % densityOuter) + densityOuter) % densityOuter;
+        return rhythmEnvelope_[low] +
+               (rhythmEnvelope_[high] - rhythmEnvelope_[low]) * fraction;
+    };
+    auto outerShapeAt = [&](float p) {
+        if (!rhythmMode) return shapeOuter(rawOuter(p));
+        return shapeOuter(rhythmEnvelopeAt(p));
+    };
 
     std::vector<float> outerRadii(densityOuter, baseOuterR);
-    std::vector<float> innerRadii(densityOuter, baseOuterR * 0.8f);
+    std::vector<float> innerRadii(densityOuter, baseOuterR);
     for (int i = 0; i < densityOuter; ++i) {
+        if (rhythmMode) {
+            // Both contours rest on the same baseline. Movement is mirrored:
+            // the outer boundary grows outward while the inner boundary grows
+            // inward, so silence is one circle and audio opens a wide web.
+            float envelope = rawOuterValues[i];
+            float outerR = baseOuterR + envelope * rhythmMaxOffset;
+            float innerR = baseOuterR - envelope * rhythmMaxOffset * 0.78f;
+            outerR = std::clamp(outerR, 24.0f * scale, maxRadius);
+            innerR = std::clamp(innerR, 14.0f * scale, maxRadius);
+            outerRadii[i] = outerR;
+            innerRadii[i] = innerR;
+            continue;
+        }
         float p = static_cast<float>(i) / densityOuter;
         float gapBreath =
             0.5f + 0.5f * std::sin(p * tau * 2.0f + time * 0.34f + 0.7f);
@@ -1321,18 +1666,22 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
         }
         radii.swap(smoothed);
     };
-    smoothRadii(outerRadii);
-    smoothRadii(innerRadii);
-    for (int i = 0; i < densityOuter; ++i) {
-        if (innerRadii[i] > outerRadii[i] - minSeparation) {
-            float middle = (outerRadii[i] + innerRadii[i]) * 0.5f;
-            outerRadii[i] = middle + minSeparation * 0.5f;
-            innerRadii[i] = middle - minSeparation * 0.5f;
+    if (!rhythmMode) {
+        smoothRadii(outerRadii);
+        smoothRadii(innerRadii);
+    }
+    if (!rhythmMode) {
+        for (int i = 0; i < densityOuter; ++i) {
+            if (innerRadii[i] > outerRadii[i] - minSeparation) {
+                float middle = (outerRadii[i] + innerRadii[i]) * 0.5f;
+                outerRadii[i] = middle + minSeparation * 0.5f;
+                innerRadii[i] = middle - minSeparation * 0.5f;
+            }
+            outerRadii[i] = std::clamp(outerRadii[i], 24.0f * scale, maxRadius);
+            innerRadii[i] = std::clamp(innerRadii[i], 14.0f * scale, maxRadius);
+            if (innerRadii[i] > outerRadii[i] - minSeparation)
+                innerRadii[i] = std::max(14.0f * scale, outerRadii[i] - minSeparation);
         }
-        outerRadii[i] = std::clamp(outerRadii[i], 24.0f * scale, maxRadius);
-        innerRadii[i] = std::clamp(innerRadii[i], 14.0f * scale, maxRadius);
-        if (innerRadii[i] > outerRadii[i] - minSeparation)
-            innerRadii[i] = std::max(14.0f * scale, outerRadii[i] - minSeparation);
     }
 
     std::vector<D2D1_POINT_2F> outerPoints;
@@ -1350,12 +1699,34 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
     }
 
     if (outerCfg.enabled && outerCfg.opacity > 0) {
+        VisualPath outerPath = BuildRingPath(outerPoints);
         VisualPath innerPath = BuildRingPath(innerPoints);
-        VisualPath meshPath = BuildMeshPath(outerPoints, innerPoints);
         float opacity = outerCfg.opacity / 100.0f;
-        if (meshPath.valid) {
-            DrawGlowGeometry(target, brush, meshPath.geometry.Get(), outerColor,
-                             opacity * 0.42f, 0.72f * scale * thickness);
+
+        if (rhythmMode) {
+            // Long, stretched web connections fade and thin out by local gap.
+            auto meshLayers = BuildWebMeshLayers(innerPoints, outerPoints, 4);
+            for (int layer = 0; layer < static_cast<int>(meshLayers.size()); ++layer) {
+                if (!meshLayers[layer].valid) continue;
+                float spread = layer / 3.0f;
+                DrawGlowGeometry(target, brush, meshLayers[layer].geometry.Get(), outerColor,
+                                 opacity * (0.70f - 0.46f * spread),
+                                 0.84f * scale * thickness * (0.96f - 0.30f * spread));
+            }
+        } else {
+            VisualPath meshPath = BuildMeshPath(outerPoints, innerPoints);
+            if (meshPath.valid) {
+                DrawGlowGeometry(target, brush, meshPath.geometry.Get(), outerColor,
+                                 opacity * 0.42f, 0.82f * scale * thickness);
+            }
+        }
+
+        if (ambientGlow > 0.01f && outerPath.valid) {
+            // The sustained layer widens the outer bloom independently of the
+            // transient web, so background pads read as a soft halo.
+            DrawGlowGeometry(target, brush, outerPath.geometry.Get(), outerGlowColor,
+                             opacity * std::clamp(ambientGlow * 0.35f, 0.0f, 0.55f),
+                             3.1f * scale * thickness);
         }
 
         if (dynamicColors && settings_->colors.spectrumGradient) {
@@ -1382,6 +1753,8 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
                                                  : static_cast<float>(end) / densityOuter;
                 gfx::Color startColor = DynamicOuterColor(pStart);
                 gfx::Color endColor = DynamicOuterColor(pEnd);
+                startColor = ShiftColor(startColor, -ambientHue, outerGlowBoost, 0.0f, 1.0f);
+                endColor = ShiftColor(endColor, -ambientHue, outerGlowBoost, 0.0f, 1.0f);
                 D2D1_POINT_2F startPoint = outerPoints[start];
                 D2D1_POINT_2F endPoint =
                     end >= densityOuter ? outerPoints[0] : outerPoints[end];
@@ -1415,10 +1788,9 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
                 }
             }
         } else {
-            VisualPath outerPath = BuildRingPath(outerPoints);
             if (outerPath.valid) {
-                DrawGlowGeometry(target, brush, outerPath.geometry.Get(), outerColor, opacity,
-                                 1.55f * scale * thickness);
+                DrawGlowGeometry(target, brush, outerPath.geometry.Get(), outerGlowColor,
+                                 opacity, 1.55f * scale * thickness);
             }
         }
 
@@ -1438,8 +1810,23 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
         for (int i = 0; i < densityDots; ++i) {
             float p = static_cast<float>(i) / densityDots;
             float spectrum = analyzer_.BandCyclic(wrap(p + 0.28f));
-            // Dot ring is anti-phase with the outermost ring.
-            float radius = baseDotR - outerShapeAt(p) * dotAmp + level * 1.8f * scale;
+            float radius;
+            if (rhythmMode) {
+                // The dotted halo stays anti-phase with the outer boundary.
+                radius = baseDotR - rhythmEnvelopeAt(p) * dotAmp * 0.80f +
+                         level * 1.8f * scale;
+            } else {
+                // Dot ring is anti-phase with the outermost ring.
+                radius = baseDotR - outerShapeAt(p) * dotAmp + level * 1.8f * scale;
+            }
+            if (ambient.enabled && ambient.fluid) {
+                float slow = ambientAt(p);
+                float fluidAmp =
+                    (3.0f + 0.090f * std::clamp(ambient.fluidAmplitude, 0, 200)) * scale;
+                float lobes = static_cast<float>(std::clamp(ambient.wavelength, 2, 8));
+                float wave = std::sin(p * tau * lobes + ambientRotation_ * 1.15f);
+                radius += wave * slow * fluidAmp;
+            }
             radius = std::clamp(radius, 8.0f * scale, maxRadius);
             float angle = p * tau - 1.5707963f;
             float x = cx + std::cos(angle) * radius;
@@ -1501,26 +1888,34 @@ void Overlay::DrawVisuals(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush
                              0.7f * scale * waveThickness, strokeStyle_.Get());
         }
 
-        std::vector<D2D1_POINT_2F> points;
-        points.reserve(densityWave);
+        // Smooth RMS envelope. 0.05 is intentionally very slow; the carrier is
+        // a clean synthetic sine rather than the noisy raw time-domain stream.
+        float rms = std::clamp(analyzer_.Level(), 0.0f, 1.0f);
+        waveEnvelope_ += (rms - waveEnvelope_) * 0.05f;
+        if (waveEnvelope_ < 0.0005f) waveEnvelope_ = 0.0f;
+        // Perceptual RMS curve: quiet music still produces a visible spindle,
+        // while true silence remains a perfectly flat center line.
+        float envelope = std::clamp(std::pow(waveEnvelope_, 0.40f) * 3.5f, 0.0f, 1.0f);
+
+        const float cycles = std::clamp(10.0f + densityWave * 0.055f, 12.0f, 24.0f);
+        const float flowPhase = time * 2.1f;
+        gfx::Color core = color;
+        core.a = static_cast<int>(std::lround(color.a * opacity));
+        brush->SetColor(core.D2D());
+        D2D1_POINT_2F previous{left, cy};
         for (int i = 0; i < densityWave; ++i) {
             float t = static_cast<float>(i) / std::max(1, densityWave - 1);
-            // 1.6.0 single-line time-domain oscilloscope.
-            float wave = analyzer_.TimeDomainAt(0.50f + t * 0.50f);
-            float x = left + t * halfWidth * 2.0f;
-            float y = cy + wave * waveAmp;
-            points.push_back(D2D1::Point2F(x, y));
-        }
-        VisualPath path = BuildRingPath(points, false);
-        if (path.valid) {
-            if (fadeReady) {
-                fadeBrush->SetOpacity(opacity);
-                target->DrawGeometry(path.geometry.Get(), fadeBrush.Get(),
-                                     1.25f * scale * waveThickness, strokeStyle_.Get());
-            } else {
-                DrawGlowGeometry(target, brush, path.geometry.Get(), color, opacity,
-                                 1.25f * scale * waveThickness);
+            float carrier = std::sin(t * tau * cycles + flowPhase);
+            // Sharpen the sine into a clean zigzag without introducing noise.
+            carrier = std::copysign(std::pow(std::abs(carrier), 0.68f), carrier);
+            float spindle = std::pow(std::sin(t * 3.14159265f), 0.80f);
+            D2D1_POINT_2F point{left + t * halfWidth * 2.0f,
+                                cy + carrier * spindle * envelope * waveAmp};
+            if (i > 0) {
+                target->DrawLine(previous, point, brush,
+                                 1.25f * scale * waveThickness, strokeStyle_.Get());
             }
+            previous = point;
         }
     }
 }
@@ -1647,6 +2042,7 @@ POINT Overlay::Position() const {
 
 void Overlay::ResetAnalysis() {
     analyzer_.Reset();
+    waveEnvelope_ = 0.0f;
     lastAudioTotal_ = UINT64_MAX;
 }
 
